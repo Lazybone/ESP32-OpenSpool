@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32-OpenSpool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #ff6b35;
+            font-size: 1.8rem;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .status-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #f44336;
+        }
+
+        .status-dot.ready {
+            background: #4caf50;
+        }
+
+        .status-dot.scanning {
+            background: #ff9800;
+            animation: pulse 1s infinite;
+        }
+
+        .wifi-indicator {
+            font-size: 0.8rem;
+            color: #888;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .wifi-indicator:hover {
+            background: #3d3d3d;
+        }
+
+        .wifi-indicator.connected {
+            color: #4caf50;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .card {
+            background: #2d2d2d;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card.collapsed .card-content {
+            display: none;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .card-title {
+            color: #ff6b35;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3d3d3d;
+        }
+
+        .card-header .card-title {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .card-toggle {
+            color: #888;
+            font-size: 1.2rem;
+            transition: transform 0.2s;
+        }
+
+        .card.collapsed .card-toggle {
+            transform: rotate(-90deg);
+        }
+
+        .card-content {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #3d3d3d;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            color: #aaa;
+            font-size: 0.85rem;
+            margin-bottom: 6px;
+        }
+
+        select, input[type="text"], input[type="number"], input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 1rem;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #ff6b35;
+        }
+
+        .color-section {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .color-input-wrapper {
+            flex: 1;
+        }
+
+        input[type="color"] {
+            width: 50px;
+            height: 44px;
+            padding: 0;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background: transparent;
+        }
+
+        .color-presets {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .color-preset {
+            aspect-ratio: 1;
+            border-radius: 6px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .color-preset:hover {
+            border-color: #fff;
+            transform: scale(1.1);
+        }
+
+        .color-preset.selected {
+            border-color: #ff6b35;
+            box-shadow: 0 0 0 2px #ff6b35;
+        }
+
+        .temp-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .btn-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #ff6b35;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #ff8555;
+        }
+
+        .btn-secondary {
+            background: #3d3d3d;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: #4d4d4d;
+        }
+
+        .btn-danger {
+            background: #f44336;
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            background: #e53935;
+        }
+
+        .btn-full {
+            grid-column: 1 / -1;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .message.success {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid #4caf50;
+            color: #4caf50;
+            display: block;
+        }
+
+        .message.error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid #f44336;
+            color: #f44336;
+            display: block;
+        }
+
+        .json-preview {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #88c0d0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .wifi-info {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+
+        .wifi-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #2d2d2d;
+        }
+
+        .wifi-info-row:last-child {
+            border-bottom: none;
+        }
+
+        .wifi-info-label {
+            color: #888;
+        }
+
+        .wifi-info-value {
+            color: #fff;
+            font-family: monospace;
+        }
+
+        .network-list {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+
+        .network-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .network-item:hover {
+            background: #252525;
+        }
+
+        .network-item.selected {
+            border: 1px solid #ff6b35;
+        }
+
+        .network-ssid {
+            font-weight: 500;
+        }
+
+        .network-signal {
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        .network-lock {
+            color: #ff6b35;
+            margin-left: 8px;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #666;
+            font-size: 0.8rem;
+        }
+
+        footer a {
+            color: #ff6b35;
+            text-decoration: none;
+        }
+
+        @media (max-width: 480px) {
+            .btn-row {
+                grid-template-columns: 1fr;
+            }
+            .temp-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ESP32-OpenSpool</h1>
+            <p class="subtitle">NTAG21x Reader/Writer</p>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-left">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+            <div class="wifi-indicator" id="wifiIndicator" onclick="toggleWifiCard()">WiFi</div>
+        </div>
+
+        <!-- Filament Data Card -->
+        <div class="card">
+            <h2 class="card-title">Filament Data</h2>
+
+            <div class="form-group">
+                <label>Brand</label>
+                <select id="brand">
+                    <option value="Bambu Lab">Bambu Lab</option>
+                    <option value="Hatchbox">Hatchbox</option>
+                    <option value="eSun">eSun</option>
+                    <option value="Overture">Overture</option>
+                    <option value="SUNLU">SUNLU</option>
+                    <option value="Polymaker">Polymaker</option>
+                    <option value="Prusament">Prusament</option>
+                    <option value="Jayo">Jayo</option>
+                    <option value="Generic" selected>Generic</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Material Type</label>
+                <select id="type">
+                    <option value="PLA" selected>PLA</option>
+                    <option value="PETG">PETG</option>
+                    <option value="ABS">ABS</option>
+                    <option value="ASA">ASA</option>
+                    <option value="TPU">TPU</option>
+                    <option value="PA">PA (Nylon)</option>
+                    <option value="PA12">PA12</option>
+                    <option value="PC">PC (Polycarbonate)</option>
+                    <option value="PEEK">PEEK</option>
+                    <option value="PVA">PVA</option>
+                    <option value="HIPS">HIPS</option>
+                    <option value="PCTG">PCTG</option>
+                    <option value="PLA-CF">PLA-CF</option>
+                    <option value="PETG-CF">PETG-CF</option>
+                    <option value="PA-CF">PA-CF</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Subtype (optional)</label>
+                <input type="text" id="subtype" placeholder="e.g. Basic, Rapid, Silk, Matte">
+                <small style="color: #666; font-size: 0.75rem; margin-top: 4px; display: block;">
+                    Naming: &lt;Brand&gt; &lt;Type&gt; &lt;Subtype&gt; (e.g. Generic PLA Basic)
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label>Color</label>
+                <div class="color-section">
+                    <div class="color-input-wrapper">
+                        <input type="text" id="colorHex" value="#FFFFFF" placeholder="#RRGGBB">
+                    </div>
+                    <input type="color" id="colorPicker" value="#FFFFFF">
+                </div>
+                <div class="color-presets">
+                    <div class="color-preset" style="background: #FFFFFF; border: 1px solid #444" data-color="#FFFFFF"></div>
+                    <div class="color-preset" style="background: #000000; border: 1px solid #444" data-color="#000000"></div>
+                    <div class="color-preset" style="background: #FF0000" data-color="#FF0000"></div>
+                    <div class="color-preset" style="background: #00FF00" data-color="#00FF00"></div>
+                    <div class="color-preset" style="background: #0000FF" data-color="#0000FF"></div>
+                    <div class="color-preset" style="background: #FFFF00" data-color="#FFFF00"></div>
+                    <div class="color-preset" style="background: #FF00FF" data-color="#FF00FF"></div>
+                    <div class="color-preset" style="background: #00FFFF" data-color="#00FFFF"></div>
+                    <div class="color-preset" style="background: #FF6600" data-color="#FF6600"></div>
+                    <div class="color-preset" style="background: #FF3399" data-color="#FF3399"></div>
+                    <div class="color-preset" style="background: #9933FF" data-color="#9933FF"></div>
+                    <div class="color-preset" style="background: #3399FF" data-color="#3399FF"></div>
+                    <div class="color-preset" style="background: #33CC33" data-color="#33CC33"></div>
+                    <div class="color-preset" style="background: #FFCC00" data-color="#FFCC00"></div>
+                    <div class="color-preset" style="background: #FF9966" data-color="#FF9966"></div>
+                    <div class="color-preset" style="background: #CC6699" data-color="#CC6699"></div>
+                    <div class="color-preset" style="background: #800000" data-color="#800000"></div>
+                    <div class="color-preset" style="background: #008000" data-color="#008000"></div>
+                    <div class="color-preset" style="background: #000080" data-color="#000080"></div>
+                    <div class="color-preset" style="background: #808000" data-color="#808000"></div>
+                    <div class="color-preset" style="background: #800080" data-color="#800080"></div>
+                    <div class="color-preset" style="background: #008080" data-color="#008080"></div>
+                    <div class="color-preset" style="background: #8B4513" data-color="#8B4513"></div>
+                    <div class="color-preset" style="background: #A0522D" data-color="#A0522D"></div>
+                    <div class="color-preset" style="background: #C0C0C0" data-color="#C0C0C0"></div>
+                    <div class="color-preset" style="background: #808080" data-color="#808080"></div>
+                    <div class="color-preset" style="background: #404040" data-color="#404040"></div>
+                    <div class="color-preset" style="background: #D4AF37" data-color="#D4AF37"></div>
+                    <div class="color-preset" style="background: #B8860B" data-color="#B8860B"></div>
+                    <div class="color-preset" style="background: #F5DEB3" data-color="#F5DEB3"></div>
+                    <div class="color-preset" style="background: #DDA0DD" data-color="#DDA0DD"></div>
+                    <div class="color-preset" style="background: #87CEEB" data-color="#87CEEB"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Temperature Settings</h2>
+
+            <div class="temp-row">
+                <div class="form-group">
+                    <label>Nozzle Min (C)</label>
+                    <input type="number" id="minTemp" value="190" min="0" max="400">
+                </div>
+                <div class="form-group">
+                    <label>Nozzle Max (C)</label>
+                    <input type="number" id="maxTemp" value="220" min="0" max="400">
+                </div>
+            </div>
+
+            <div class="temp-row">
+                <div class="form-group">
+                    <label>Bed Min (C)</label>
+                    <input type="number" id="bedMinTemp" value="50" min="0" max="150">
+                </div>
+                <div class="form-group">
+                    <label>Bed Max (C)</label>
+                    <input type="number" id="bedMaxTemp" value="60" min="0" max="150">
+                </div>
+            </div>
+        </div>
+
+        <!-- Tag Info Card (shown after read) -->
+        <div class="card" id="tagInfoCard" style="display: none;">
+            <h2 class="card-title">Tag Info</h2>
+            <div class="wifi-info">
+                <div class="wifi-info-row">
+                    <span class="wifi-info-label">Tag Type</span>
+                    <span class="wifi-info-value" id="tagType">-</span>
+                </div>
+                <div class="wifi-info-row">
+                    <span class="wifi-info-label">UID</span>
+                    <span class="wifi-info-value" id="tagUID">-</span>
+                </div>
+                <div class="wifi-info-row">
+                    <span class="wifi-info-label">Capacity</span>
+                    <span class="wifi-info-value" id="tagCapacity">-</span>
+                </div>
+                <div class="wifi-info-row">
+                    <span class="wifi-info-label">Used</span>
+                    <span class="wifi-info-value" id="tagUsed">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Actions</h2>
+            <div class="btn-row">
+                <button class="btn btn-secondary" id="btnRead" onclick="readTag()">Read Tag</button>
+                <button class="btn btn-primary" id="btnWrite" onclick="writeTag()">Write Tag</button>
+            </div>
+            <div class="btn-row" style="margin-top: 10px;">
+                <button class="btn btn-danger btn-full" id="btnErase" onclick="eraseTag()">Erase Tag</button>
+            </div>
+            <div class="message" id="message"></div>
+            <div class="json-preview" id="jsonPreview" style="display: none;"></div>
+        </div>
+
+        <!-- Settings Card -->
+        <div class="card collapsed" id="wifiCard">
+            <div class="card-header" onclick="toggleWifiCard()">
+                <h2 class="card-title">Settings</h2>
+                <span class="card-toggle">&#9660;</span>
+            </div>
+            <div class="card-content">
+                <h3 style="color: #ff6b35; font-size: 1rem; margin-bottom: 15px;">WiFi</h3>
+                <div class="wifi-info" id="wifiInfo">
+                    <div class="wifi-info-row">
+                        <span class="wifi-info-label">Mode</span>
+                        <span class="wifi-info-value" id="wifiMode">-</span>
+                    </div>
+                    <div class="wifi-info-row">
+                        <span class="wifi-info-label">Connected to</span>
+                        <span class="wifi-info-value" id="wifiSSID">-</span>
+                    </div>
+                    <div class="wifi-info-row">
+                        <span class="wifi-info-label">IP Address</span>
+                        <span class="wifi-info-value" id="wifiIP">-</span>
+                    </div>
+                    <div class="wifi-info-row">
+                        <span class="wifi-info-label">AP IP (Setup)</span>
+                        <span class="wifi-info-value" id="wifiAPIP">-</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Available Networks</label>
+                    <div class="network-list" id="networkList">
+                        <div style="color: #888; text-align: center; padding: 20px;">
+                            Click "Scan" to find networks
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" style="width: 100%;" onclick="scanNetworks()">Scan Networks</button>
+                </div>
+
+                <div class="form-group">
+                    <label>Network Name (SSID)</label>
+                    <input type="text" id="wifiInputSSID" placeholder="Enter network name">
+                </div>
+
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="wifiInputPassword" placeholder="Enter password">
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="connectWifi()">Connect</button>
+                    <button class="btn btn-danger" onclick="disconnectWifi()">Forget Network</button>
+                </div>
+
+                <div class="message" id="wifiMessage"></div>
+
+                <h3 style="color: #ff6b35; font-size: 1rem; margin-top: 25px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #3d3d3d;">Firmware Update (OTA)</h3>
+                <div class="form-group">
+                    <label>Select firmware.bin file</label>
+                    <input type="file" id="firmwareFile" accept=".bin" style="width: 100%; padding: 10px; background: #1a1a1a; border: 1px solid #3d3d3d; border-radius: 8px; color: #fff;">
+                </div>
+                <button class="btn btn-primary" style="width: 100%;" onclick="uploadFirmware()">Upload Firmware</button>
+                <div class="message" id="otaMessage" style="margin-top: 10px;"></div>
+                <progress id="otaProgress" value="0" max="100" style="width: 100%; height: 20px; margin-top: 10px; display: none;"></progress>
+            </div>
+        </div>
+
+        <footer>
+            <p style="margin-bottom: 5px;">
+                <a href="https://github.com/Lazybone/ESP32-OpenSpool" target="_blank" title="GitHub">
+                    <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                </a>
+            </p>
+            <p style="font-size: 0.7rem;">v0.1.0</p>
+        </footer>
+    </div>
+
+    <script>
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const message = document.getElementById('message');
+        const jsonPreview = document.getElementById('jsonPreview');
+        const wifiIndicator = document.getElementById('wifiIndicator');
+        const wifiCard = document.getElementById('wifiCard');
+        const wifiMessage = document.getElementById('wifiMessage');
+
+        // Toggle WiFi card
+        function toggleWifiCard() {
+            wifiCard.classList.toggle('collapsed');
+            if (!wifiCard.classList.contains('collapsed')) {
+                loadWifiStatus();
+            }
+        }
+
+        // Load WiFi status
+        async function loadWifiStatus() {
+            try {
+                const response = await fetch('/api/wifi/status');
+                const data = await response.json();
+
+                document.getElementById('wifiMode').textContent =
+                    data.mode === 'ap' ? 'Access Point' :
+                    data.mode === 'sta' ? 'Client' : 'AP + Client';
+                document.getElementById('wifiSSID').textContent = data.connected ? data.ssid : 'Not connected';
+                document.getElementById('wifiIP').textContent = data.ip || '-';
+                document.getElementById('wifiAPIP').textContent = data.ap_ip || '-';
+
+                // Update indicator
+                if (data.connected) {
+                    wifiIndicator.textContent = data.ssid;
+                    wifiIndicator.classList.add('connected');
+                } else {
+                    wifiIndicator.textContent = 'AP Mode';
+                    wifiIndicator.classList.remove('connected');
+                }
+
+                // Pre-fill SSID if configured
+                if (data.configured_ssid) {
+                    document.getElementById('wifiInputSSID').value = data.configured_ssid;
+                }
+            } catch (e) {
+                console.error('Failed to load WiFi status:', e);
+            }
+        }
+
+        // Scan networks
+        async function scanNetworks() {
+            const networkList = document.getElementById('networkList');
+            networkList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">Scanning...</div>';
+
+            try {
+                const response = await fetch('/api/wifi/scan');
+                const data = await response.json();
+
+                if (data.networks && data.networks.length > 0) {
+                    networkList.innerHTML = data.networks.map(net => `
+                        <div class="network-item" onclick="selectNetwork('${net.ssid}')">
+                            <div>
+                                <span class="network-ssid">${net.ssid}</span>
+                                ${net.secure ? '<span class="network-lock">&#128274;</span>' : ''}
+                            </div>
+                            <span class="network-signal">${net.rssi} dBm</span>
+                        </div>
+                    `).join('');
+                } else {
+                    networkList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">No networks found</div>';
+                }
+            } catch (e) {
+                networkList.innerHTML = '<div style="color: #f44336; text-align: center; padding: 20px;">Scan failed</div>';
+            }
+        }
+
+        // Select network from list
+        function selectNetwork(ssid) {
+            document.getElementById('wifiInputSSID').value = ssid;
+            document.querySelectorAll('.network-item').forEach(item => {
+                item.classList.remove('selected');
+                if (item.querySelector('.network-ssid').textContent === ssid) {
+                    item.classList.add('selected');
+                }
+            });
+        }
+
+        // Connect to WiFi
+        async function connectWifi() {
+            const ssid = document.getElementById('wifiInputSSID').value.trim();
+            const password = document.getElementById('wifiInputPassword').value;
+
+            if (!ssid) {
+                showWifiMessage('Please enter a network name', 'error');
+                return;
+            }
+
+            showWifiMessage('Connecting...', 'success');
+
+            try {
+                const response = await fetch('/api/wifi/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ssid, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showWifiMessage('Connected! Page will reload...', 'success');
+                    setTimeout(() => {
+                        loadWifiStatus();
+                    }, 3000);
+                } else {
+                    showWifiMessage(data.error || 'Connection failed', 'error');
+                }
+            } catch (e) {
+                showWifiMessage('Connection failed: ' + e.message, 'error');
+            }
+        }
+
+        // Disconnect WiFi
+        async function disconnectWifi() {
+            if (!confirm('This will forget the saved network. Continue?')) return;
+
+            try {
+                const response = await fetch('/api/wifi/disconnect', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    showWifiMessage('Network forgotten. Switching to AP mode...', 'success');
+                    setTimeout(() => {
+                        loadWifiStatus();
+                    }, 2000);
+                }
+            } catch (e) {
+                showWifiMessage('Failed: ' + e.message, 'error');
+            }
+        }
+
+        function showWifiMessage(text, type) {
+            wifiMessage.textContent = text;
+            wifiMessage.className = 'message ' + type;
+        }
+
+        // Update selected color preset
+        function updateSelectedPreset(color) {
+            document.querySelectorAll('.color-preset').forEach(p => {
+                p.classList.remove('selected');
+                if (p.dataset.color.toUpperCase() === color.toUpperCase()) {
+                    p.classList.add('selected');
+                }
+            });
+        }
+
+        // Sync color picker with hex input
+        document.getElementById('colorPicker').addEventListener('input', (e) => {
+            const color = e.target.value.toUpperCase();
+            document.getElementById('colorHex').value = color;
+            updateSelectedPreset(color);
+        });
+
+        document.getElementById('colorHex').addEventListener('input', (e) => {
+            let hex = e.target.value.toUpperCase();
+            if (hex.length === 6 && !hex.startsWith('#')) {
+                hex = '#' + hex;
+                e.target.value = hex;
+            }
+            if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+                document.getElementById('colorPicker').value = hex;
+                updateSelectedPreset(hex);
+            }
+        });
+
+        // Color presets
+        document.querySelectorAll('.color-preset').forEach(preset => {
+            preset.addEventListener('click', () => {
+                const color = preset.dataset.color;
+                document.getElementById('colorHex').value = color;
+                document.getElementById('colorPicker').value = color;
+                updateSelectedPreset(color);
+            });
+        });
+
+        updateSelectedPreset('#FFFFFF');
+
+        // Check NFC status
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                if (data.nfcReady) {
+                    statusDot.classList.add('ready');
+                    statusDot.classList.remove('scanning');
+                    statusText.textContent = 'NFC Ready';
+                } else {
+                    statusDot.classList.remove('ready', 'scanning');
+                    statusText.textContent = 'NFC Not Ready';
+                }
+
+                // Update WiFi indicator
+                if (data.wifi && data.wifi.connected) {
+                    wifiIndicator.textContent = data.wifi.ssid;
+                    wifiIndicator.classList.add('connected');
+                } else {
+                    wifiIndicator.textContent = 'AP Mode';
+                    wifiIndicator.classList.remove('connected');
+                }
+            } catch (e) {
+                statusDot.classList.remove('ready', 'scanning');
+                statusText.textContent = 'Connection Error';
+            }
+        }
+
+        function showMessage(text, type) {
+            message.textContent = text;
+            message.className = 'message ' + type;
+        }
+
+        function hideMessage() {
+            message.className = 'message';
+        }
+
+        function buildJSON() {
+            const data = {
+                protocol: "openspool",
+                version: "1.0",
+                brand: document.getElementById('brand').value,
+                type: document.getElementById('type').value,
+                color_hex: document.getElementById('colorHex').value.toUpperCase(),
+                min_temp: parseInt(document.getElementById('minTemp').value),
+                max_temp: parseInt(document.getElementById('maxTemp').value),
+                bed_min_temp: parseInt(document.getElementById('bedMinTemp').value),
+                bed_max_temp: parseInt(document.getElementById('bedMaxTemp').value)
+            };
+
+            const subtype = document.getElementById('subtype').value.trim();
+            if (subtype) {
+                data.subtype = subtype;
+            }
+
+            return data;
+        }
+
+        function populateForm(data) {
+            if (data.brand) {
+                const brandSelect = document.getElementById('brand');
+                for (let option of brandSelect.options) {
+                    if (option.value === data.brand) {
+                        option.selected = true;
+                        break;
+                    }
+                }
+            }
+
+            if (data.type) {
+                const typeSelect = document.getElementById('type');
+                for (let option of typeSelect.options) {
+                    if (option.value === data.type) {
+                        option.selected = true;
+                        break;
+                    }
+                }
+            }
+
+            if (data.color_hex) {
+                document.getElementById('colorHex').value = data.color_hex;
+                document.getElementById('colorPicker').value = data.color_hex;
+                updateSelectedPreset(data.color_hex);
+            }
+
+            if (data.min_temp) document.getElementById('minTemp').value = data.min_temp;
+            if (data.max_temp) document.getElementById('maxTemp').value = data.max_temp;
+            if (data.bed_min_temp) document.getElementById('bedMinTemp').value = data.bed_min_temp;
+            if (data.bed_max_temp) document.getElementById('bedMaxTemp').value = data.bed_max_temp;
+
+            document.getElementById('subtype').value = data.subtype || '';
+        }
+
+        function updateTagInfo(tag) {
+            const tagInfoCard = document.getElementById('tagInfoCard');
+            if (tag) {
+                document.getElementById('tagType').textContent = tag.type || '-';
+                document.getElementById('tagUID').textContent = tag.uid || '-';
+                document.getElementById('tagCapacity').textContent = tag.capacity ? `${tag.capacity} bytes` : '-';
+                document.getElementById('tagUsed').textContent = tag.used !== undefined ? `${tag.used} bytes` : '-';
+                tagInfoCard.style.display = 'block';
+            } else {
+                tagInfoCard.style.display = 'none';
+            }
+        }
+
+        async function readTag() {
+            const btn = document.getElementById('btnRead');
+            btn.disabled = true;
+            btn.textContent = 'Reading...';
+            statusDot.classList.add('scanning');
+            statusDot.classList.remove('ready');
+            hideMessage();
+
+            try {
+                const response = await fetch('/api/read');
+                const result = await response.json();
+
+                if (result.error) {
+                    showMessage(result.error, 'error');
+                    jsonPreview.style.display = 'none';
+                    updateTagInfo(null);
+                } else {
+                    // Update tag info display
+                    if (result.tag) {
+                        updateTagInfo(result.tag);
+                    }
+
+                    // Populate form with data
+                    if (result.data && typeof result.data === 'object') {
+                        populateForm(result.data);
+                        showMessage('Tag read successfully!', 'success');
+                        jsonPreview.textContent = JSON.stringify(result.data, null, 2);
+                        jsonPreview.style.display = 'block';
+                    } else if (result.message) {
+                        showMessage(result.message, 'success');
+                        jsonPreview.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                showMessage('Failed to read tag: ' + e.message, 'error');
+                updateTagInfo(null);
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Read Tag';
+            checkStatus();
+        }
+
+        async function writeTag() {
+            const btn = document.getElementById('btnWrite');
+            btn.disabled = true;
+            btn.textContent = 'Writing...';
+            statusDot.classList.add('scanning');
+            statusDot.classList.remove('ready');
+            hideMessage();
+
+            const data = buildJSON();
+            jsonPreview.textContent = JSON.stringify(data, null, 2);
+            jsonPreview.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/write', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Tag written successfully!', 'success');
+                } else {
+                    showMessage(result.error || 'Write failed', 'error');
+                }
+            } catch (e) {
+                showMessage('Failed to write tag: ' + e.message, 'error');
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Write Tag';
+            checkStatus();
+        }
+
+        async function eraseTag() {
+            if (!confirm('This will erase all data on the tag. Continue?')) return;
+
+            const btn = document.getElementById('btnErase');
+            btn.disabled = true;
+            btn.textContent = 'Erasing...';
+            statusDot.classList.add('scanning');
+            statusDot.classList.remove('ready');
+            hideMessage();
+
+            try {
+                const response = await fetch('/api/erase', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Tag erased successfully!', 'success');
+                    if (result.tag) {
+                        updateTagInfo(result.tag);
+                    }
+                    jsonPreview.style.display = 'none';
+                } else {
+                    showMessage(result.error || 'Erase failed', 'error');
+                }
+            } catch (e) {
+                showMessage('Failed to erase tag: ' + e.message, 'error');
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Erase Tag';
+            checkStatus();
+        }
+
+        async function uploadFirmware() {
+            const fileInput = document.getElementById('firmwareFile');
+            const file = fileInput.files[0];
+            const otaMessage = document.getElementById('otaMessage');
+            const otaProgress = document.getElementById('otaProgress');
+
+            if (!file) {
+                otaMessage.textContent = 'Please select a firmware file';
+                otaMessage.className = 'message error';
+                return;
+            }
+
+            if (!file.name.endsWith('.bin')) {
+                otaMessage.textContent = 'Please select a .bin file';
+                otaMessage.className = 'message error';
+                return;
+            }
+
+            if (!confirm('Upload new firmware? The device will restart after update.')) return;
+
+            otaMessage.textContent = 'Uploading firmware...';
+            otaMessage.className = 'message success';
+            otaProgress.style.display = 'block';
+            otaProgress.value = 0;
+
+            const formData = new FormData();
+            formData.append('firmware', file, file.name);
+
+            try {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/api/ota', true);
+
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        otaProgress.value = percent;
+                        otaMessage.textContent = `Uploading... ${percent}%`;
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status === 200) {
+                        const result = JSON.parse(xhr.responseText);
+                        if (result.success) {
+                            otaMessage.textContent = 'Update successful! Restarting device...';
+                            otaMessage.className = 'message success';
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 5000);
+                        } else {
+                            otaMessage.textContent = result.error || 'Update failed';
+                            otaMessage.className = 'message error';
+                        }
+                    } else {
+                        otaMessage.textContent = 'Upload failed';
+                        otaMessage.className = 'message error';
+                    }
+                    otaProgress.style.display = 'none';
+                };
+
+                xhr.onerror = () => {
+                    otaMessage.textContent = 'Upload failed - connection error';
+                    otaMessage.className = 'message error';
+                    otaProgress.style.display = 'none';
+                };
+
+                xhr.send(formData);
+            } catch (e) {
+                otaMessage.textContent = 'Upload failed: ' + e.message;
+                otaMessage.className = 'message error';
+                otaProgress.style.display = 'none';
+            }
+        }
+
+        // Initial status check
+        checkStatus();
+
+        // Periodic status check
+        setInterval(checkStatus, 5000);
+    </script>
+</body>
+</html>

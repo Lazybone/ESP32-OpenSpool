@@ -1,0 +1,49 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Build artifacts
+*.o
+*.obj
+*.elf
+*.hex
+*.map
+
+# Release binaries (in project root)
+ESP32-OpenSpool-*.bin
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Environment
+.env
+.env.local
+
+# Python (if using esptool)
+__pycache__/
+*.py[cod]
+venv/
+.venv/
