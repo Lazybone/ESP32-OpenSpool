@@ -18,26 +18,29 @@
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
-#include <Wire.h>
+#include <SPI.h>
 #include <Adafruit_PN532.h>
 #include <Preferences.h>
 #include <ESPmDNS.h>
 #include <Update.h>
+#include <esp_task_wdt.h>
 
 // WiFi AP Settings (Fallback/Setup Mode)
 const char* AP_SSID = "OpenSpool";
 const char* AP_PASS = "openspool";
 const char* MDNS_HOSTNAME = "openspool";
 
-// I2C Pins for ESP32-S3 Zero
-#define I2C_SDA 8
-#define I2C_SCL 9
+// SPI Pins for ESP32-S3 Zero
+#define PN532_SCK  12
+#define PN532_MISO 13
+#define PN532_MOSI 11
+#define PN532_SS   10
 
 // WiFi connection timeout (ms)
 #define WIFI_TIMEOUT 15000
 
-// PN532 Setup (I2C)
-Adafruit_PN532 nfc(I2C_SDA, I2C_SCL);
+// PN532 Setup (Software SPI - more compatible)
+Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 
 // Web Server
 AsyncWebServer server(80);
@@ -220,10 +223,15 @@ void setupWiFi() {
     }
 }
 
-// Scan for available networks
-String scanNetworks() {
-    Serial.println("Scanning WiFi networks...");
-    int n = WiFi.scanNetworks();
+// Cached scan results
+String cachedScanResult = "{\"networks\":[]}";
+bool scanInProgress = false;
+
+// Background scan task
+void scanTask(void* parameter) {
+    Serial.println("Scan task started");
+    int n = WiFi.scanNetworks(false, false, false, 100);
+    Serial.printf("Found %d networks\n", n);
 
     JsonDocument doc;
     JsonArray networks = doc["networks"].to<JsonArray>();
@@ -236,10 +244,20 @@ String scanNetworks() {
     }
 
     WiFi.scanDelete();
+    serializeJson(doc, cachedScanResult);
+    Serial.println("Scan complete");
+    scanInProgress = false;
+    vTaskDelete(NULL);
+}
 
-    String result;
-    serializeJson(doc, result);
-    return result;
+// Start scan and return cached results
+String scanNetworks() {
+    if (!scanInProgress) {
+        scanInProgress = true;
+        Serial.println("Starting WiFi scan task...");
+        xTaskCreatePinnedToCore(scanTask, "scanTask", 4096, NULL, 1, NULL, 0);
+    }
+    return cachedScanResult;
 }
 
 // Get current WiFi status as JSON
@@ -264,11 +282,23 @@ String getWiFiStatusJson() {
 }
 
 void setupNFC() {
-    nfc.begin();
+    delay(100);  // Let PN532 power up
 
-    uint32_t versiondata = nfc.getFirmwareVersion();
+    // Try multiple times to connect
+    uint32_t versiondata = 0;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        Serial.printf("NFC init attempt %d/3...\n", attempt);
+        nfc.begin();
+        delay(100);
+        versiondata = nfc.getFirmwareVersion();
+        if (versiondata) {
+            break;  // Success!
+        }
+        delay(300);  // Wait before retry
+    }
+
     if (!versiondata) {
-        Serial.println("PN532 not found!");
+        Serial.println("PN532 not found after 5 attempts!");
         nfcReady = false;
         return;
     }
@@ -365,12 +395,16 @@ String readNtagData() {
     uint8_t uid[7];
     uint8_t uidLength;
 
+    Serial.println("readNtagData: waiting for tag...");
     if (!waitForTag(uid, &uidLength)) {
+        Serial.println("readNtagData: no tag found");
         return "{\"error\": \"No tag found\"}";
     }
+    Serial.println("readNtagData: tag found, detecting type...");
 
     // Detect tag type
     NtagType tagType = detectNtagType();
+    Serial.printf("readNtagData: tag type = %d\n", tagType);
     if (tagType == NTAG_UNKNOWN) {
         return "{\"error\": \"Unknown tag type\"}";
     }
@@ -568,9 +602,6 @@ String eraseNtagData() {
 }
 
 void setupWebServer() {
-    // Serve static files from LittleFS
-    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
-
     // API: Get combined status (NFC + WiFi)
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
@@ -738,6 +769,9 @@ void setupWebServer() {
     server.onNotFound([](AsyncWebServerRequest *request) {
         request->send(404, "text/plain", "Not found");
     });
+
+    // Serve static files from LittleFS (MUST be after API routes!)
+    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
     server.begin();
     Serial.println("Web server started");

@@ -94,6 +94,106 @@
             50% { opacity: 0.5; }
         }
 
+        /* Modal Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #2d2d2d;
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 360px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: modalSlide 0.2s ease-out;
+        }
+
+        @keyframes modalSlide {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .modal-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: rgba(244, 67, 54, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 28px;
+        }
+
+        .modal-title {
+            color: #fff;
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+        }
+
+        .modal-message {
+            color: #999;
+            font-size: 0.9rem;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .modal-btn-cancel {
+            background: #3d3d3d;
+            color: #fff;
+        }
+
+        .modal-btn-cancel:hover {
+            background: #4d4d4d;
+        }
+
+        .modal-btn-confirm {
+            background: #f44336;
+            color: #fff;
+        }
+
+        .modal-btn-confirm:hover {
+            background: #d32f2f;
+        }
+
         .card {
             background: #2d2d2d;
             border-radius: 12px;
@@ -689,31 +789,41 @@
             }
         }
 
-        // Scan networks
+        // Scan networks with auto-retry
         async function scanNetworks() {
             const networkList = document.getElementById('networkList');
             networkList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">Scanning...</div>';
 
-            try {
-                const response = await fetch('/api/wifi/scan');
-                const data = await response.json();
+            let attempts = 0;
+            const maxAttempts = 10;
 
-                if (data.networks && data.networks.length > 0) {
-                    networkList.innerHTML = data.networks.map(net => `
-                        <div class="network-item" onclick="selectNetwork('${net.ssid}')">
-                            <div>
-                                <span class="network-ssid">${net.ssid}</span>
-                                ${net.secure ? '<span class="network-lock">&#128274;</span>' : ''}
+            while (attempts < maxAttempts) {
+                try {
+                    const response = await fetch('/api/wifi/scan');
+                    const data = await response.json();
+
+                    if (data.networks && data.networks.length > 0) {
+                        networkList.innerHTML = data.networks.map(net => `
+                            <div class="network-item" onclick="selectNetwork('${net.ssid}')">
+                                <div>
+                                    <span class="network-ssid">${net.ssid}</span>
+                                    ${net.secure ? '<span class="network-lock">&#128274;</span>' : ''}
+                                </div>
+                                <span class="network-signal">${net.rssi} dBm</span>
                             </div>
-                            <span class="network-signal">${net.rssi} dBm</span>
-                        </div>
-                    `).join('');
-                } else {
-                    networkList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">No networks found</div>';
+                        `).join('');
+                        return;
+                    }
+                } catch (e) {
+                    console.log('Scan attempt failed, retrying...');
                 }
-            } catch (e) {
-                networkList.innerHTML = '<div style="color: #f44336; text-align: center; padding: 20px;">Scan failed</div>';
+
+                attempts++;
+                networkList.innerHTML = `<div style="color: #888; text-align: center; padding: 20px;">Scanning... (${attempts}/${maxAttempts})</div>`;
+                await new Promise(r => setTimeout(r, 1000));
             }
+
+            networkList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">No networks found</div>';
         }
 
         // Select network from list
@@ -830,7 +940,11 @@
         async function checkStatus() {
             try {
                 const response = await fetch('/api/status');
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
                 const data = await response.json();
+                console.log('Status:', data);
 
                 if (data.nfcReady) {
                     statusDot.classList.add('ready');
@@ -850,6 +964,7 @@
                     wifiIndicator.classList.remove('connected');
                 }
             } catch (e) {
+                console.error('Status check failed:', e);
                 statusDot.classList.remove('ready', 'scanning');
                 statusText.textContent = 'Connection Error';
             }
@@ -1011,9 +1126,17 @@
             checkStatus();
         }
 
-        async function eraseTag() {
-            if (!confirm('This will erase all data on the tag. Continue?')) return;
+        function eraseTag() {
+            showModal(
+                'Erase Tag',
+                'This will permanently delete all data on the tag. This action cannot be undone.',
+                '🗑️',
+                'Erase',
+                doEraseTag
+            );
+        }
 
+        async function doEraseTag() {
             const btn = document.getElementById('btnErase');
             btn.disabled = true;
             btn.textContent = 'Erasing...';
@@ -1117,11 +1240,57 @@
             }
         }
 
+        // Modal functions
+        let modalCallback = null;
+
+        function showModal(title, message, icon, confirmText, callback) {
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalMessage').textContent = message;
+            document.getElementById('modalIcon').textContent = icon || '⚠️';
+            document.getElementById('modalConfirmBtn').textContent = confirmText || 'Confirm';
+            document.getElementById('confirmModal').classList.add('active');
+            modalCallback = callback;
+        }
+
+        function closeModal() {
+            document.getElementById('confirmModal').classList.remove('active');
+            modalCallback = null;
+        }
+
+        function confirmAction() {
+            const callback = modalCallback;
+            closeModal();
+            if (callback) callback();
+        }
+
+        // Close modal on overlay click (deferred until DOM ready)
+        document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.getElementById('confirmModal');
+            if (modal) {
+                modal.addEventListener('click', (e) => {
+                    if (e.target.id === 'confirmModal') closeModal();
+                });
+            }
+        });
+
         // Initial status check
         checkStatus();
 
         // Periodic status check
         setInterval(checkStatus, 5000);
     </script>
+
+    <!-- Confirm Modal -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal">
+            <div class="modal-icon" id="modalIcon">⚠️</div>
+            <h3 class="modal-title" id="modalTitle">Confirm Action</h3>
+            <p class="modal-message" id="modalMessage">Are you sure?</p>
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
+                <button class="modal-btn modal-btn-confirm" id="modalConfirmBtn" onclick="confirmAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

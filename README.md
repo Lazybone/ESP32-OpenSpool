@@ -22,31 +22,33 @@ A standalone NTAG21x NFC tag reader/writer for the [OpenSpool](https://github.co
 
 | Component | Description |
 |-----------|-------------|
-| ESP32-S3 Zero | Waveshare ESP32-S3 Zero or compatible ESP32-S3 board |
-| PN532 NFC Module | NFC/RFID module with I2C interface |
+| ESP32-S3 Zero | Waveshare ESP32-S3 Zero or compatible ESP32-S3 board (4MB Flash) |
+| PN532 NFC Module | NFC/RFID module with SPI interface |
 | NTAG21x Tags | NTAG213, NTAG215, or NTAG216 NFC tags |
 | USB-C Cable | For power and initial programming |
 
 ## Wiring Diagram
 
-Connect the PN532 module to the ESP32-S3 Zero via I2C:
+Connect the PN532 module to the ESP32-S3 Zero via SPI:
 
 | PN532 Pin | ESP32-S3 Zero Pin |
 |-----------|-------------------|
 | VCC | 3.3V |
 | GND | GND |
-| SDA | GPIO8 |
-| SCL | GPIO9 |
+| SCK | GPIO12 |
+| MISO | GPIO13 |
+| MOSI | GPIO11 |
+| SS (CS) | GPIO10 |
 
-> **Note**: Make sure your PN532 module is set to I2C mode. Most modules have a DIP switch or solder jumpers to select the communication mode.
+> **Note**: Make sure your PN532 module is set to SPI mode. Most modules have a DIP switch or solder jumpers to select the communication mode.
 
-### PN532 I2C Mode Configuration
+### PN532 SPI Mode Configuration
 
 Set the DIP switches or solder jumpers on your PN532 module:
 
 | Switch 1 | Switch 2 | Mode |
 |----------|----------|------|
-| OFF | ON | I2C |
+| OFF | ON | SPI |
 
 ## Installation
 
@@ -333,8 +335,8 @@ curl -X POST http://192.168.4.1/api/wifi/connect \
 
 ### NFC Module Not Detected
 
-- Check wiring connections (SDA, SCL, VCC, GND)
-- Ensure PN532 is set to I2C mode
+- Check wiring connections (SCK, MISO, MOSI, SS, VCC, GND)
+- Ensure PN532 is set to SPI mode (Switch 1: OFF, Switch 2: ON)
 - Try power cycling the device
 - Check serial monitor for debug output: `pio device monitor`
 
@@ -354,7 +356,8 @@ curl -X POST http://192.168.4.1/api/wifi/connect \
 ### Tag Not Reading/Writing
 
 - Ensure you're using NTAG21x tags (NTAG213, NTAG215, or NTAG216)
-- Hold the tag steady on the reader
+- **Don't place the tag directly on the reader** - hold it 1-3mm above for best signal
+- Hold the tag steady during read/write operations
 - Check the status indicator in the web interface
 - Make sure the tag is not write-protected
 - For NTAG213, ensure the data fits within 144 bytes (~134 bytes usable)
@@ -402,13 +405,15 @@ const char* AP_SSID = "OpenSpool";  // Change AP name
 const char* AP_PASS = "openspool";         // Change AP password
 ```
 
-### Changing I2C Pins
+### Changing SPI Pins
 
 Edit `src/main.cpp`:
 
 ```cpp
-#define I2C_SDA 8   // Change to your SDA pin
-#define I2C_SCL 9   // Change to your SCL pin
+#define PN532_SCK  12  // Change to your SCK pin
+#define PN532_MISO 13  // Change to your MISO pin
+#define PN532_MOSI 11  // Change to your MOSI pin
+#define PN532_SS   10  // Change to your SS/CS pin
 ```
 
 ## Project Structure
