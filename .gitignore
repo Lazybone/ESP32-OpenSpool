@@ -29,7 +29,7 @@ Desktop.ini
 *.map
 
 # Release binaries (in project root)
-ESP32-OpenSpool-*.bin
+ESP32-OpenSpool-v*-full.bin
 
 # Logs
 *.log

@@ -56,14 +56,14 @@ No development environment needed - flash directly from your browser!
 
 1. **Download the firmware**
    - Go to [Releases](https://github.com/Lazybone/ESP32-OpenSpool/releases)
-   - Download `ESP32-OpenSpool-full.bin` (combined firmware + web interface)
+   - Download `ESP32-OpenSpool-vX.X.X-full.bin` (combined firmware + web interface)
 
 2. **Flash via Web Flasher**
    - Open [ESP Web Tools](https://espressif.github.io/esptool-js/) in Chrome or Edge
    - Connect your ESP32-S3 Zero via USB
    - Click "Connect" and select the serial port
    - Set flash address to `0x0`
-   - Select the downloaded `ESP32-OpenSpool-full.bin` file
+   - Select the downloaded `.bin` file
    - Click "Program" and wait for completion
 
 3. **Done!**
