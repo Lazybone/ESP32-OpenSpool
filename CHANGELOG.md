@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2025-01-17
+
+### Fixed
+
+- **NDEF format compatibility**: Changed from Text Record (TNF=0x01) to MIME type Record (TNF=0x02) with `application/json`
+- Tags written by ESP32-OpenSpool are now recognized by Orca Slicer and other OpenSpool-compatible applications
+
+### Added
+
+- Comprehensive NFC tag information output on Serial when reading:
+  - UID, tag type, memory capacity
+  - ATQA and SAK values
+  - Password protection status
+  - Write protection and config lock status
+  - Authentication attempts remaining
+  - Originality signature (if readable)
+  - Raw hex dump of tag pages
+  - Parsed OpenSpool data fields
+
+### Technical
+
+- NDEF Record format: `D2 10 [len] "application/json" + JSON payload`
+- Updated file header comments (I2C → SPI documentation)
+
 ## [0.1.5] - 2025-01-16
 
 ### Changed

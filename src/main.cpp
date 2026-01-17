@@ -4,13 +4,17 @@
  *
  * Supported tags: NTAG213, NTAG215, NTAG216
  *
- * Hardware: ESP32-S3 Zero + PN532 RFID Module (I2C)
+ * Hardware: ESP32-S3 Zero + PN532 RFID Module (SPI)
  *
- * Wiring (I2C):
- *   PN532 SDA -> GPIO8
- *   PN532 SCL -> GPIO9
- *   PN532 VCC -> 3.3V
- *   PN532 GND -> GND
+ * Wiring (SPI):
+ *   PN532 SCK  -> GPIO12
+ *   PN532 MISO -> GPIO13
+ *   PN532 MOSI -> GPIO11
+ *   PN532 SS   -> GPIO10
+ *   PN532 VCC  -> 3.3V
+ *   PN532 GND  -> GND
+ *
+ * PN532 DIP Switch: Switch 1 = OFF, Switch 2 = ON (SPI mode)
  */
 
 #include <Arduino.h>
@@ -391,6 +395,142 @@ String uidToString(uint8_t* uid, uint8_t uidLength) {
     return result;
 }
 
+// Get configuration page address for each NTAG type
+int getNtagConfigPage(NtagType type) {
+    switch (type) {
+        case NTAG_213: return 41;   // Config pages 41-44
+        case NTAG_215: return 131;  // Config pages 131-134
+        case NTAG_216: return 227;  // Config pages 227-230
+        default: return 41;
+    }
+}
+
+// Read NTAG originality signature (32 bytes)
+bool readNtagSignature(uint8_t* signature) {
+    uint8_t cmd[1] = {0x3C};  // READ_SIG command
+    uint8_t response[34];     // 32 bytes signature + status bytes
+    uint8_t responseLength = sizeof(response);
+
+    if (!nfc.inDataExchange(cmd, 1, response, &responseLength)) {
+        return false;
+    }
+
+    if (responseLength >= 32) {
+        memcpy(signature, response, 32);
+        return true;
+    }
+    return false;
+}
+
+// Read NTAG password protection configuration
+// Returns: 0 = no protection, 1-255 = protected from page N
+uint8_t readPasswordProtectionStatus(NtagType type) {
+    int configPage = getNtagConfigPage(type);
+    uint8_t pageData[4];
+
+    // AUTH0 is at config page + 0, byte 3
+    if (nfc.ntag2xx_ReadPage(configPage, pageData)) {
+        return pageData[3];  // AUTH0 value (first page requiring auth, 0xFF = disabled)
+    }
+    return 0xFF;  // Default: no protection
+}
+
+// Read NTAG access configuration
+bool readAccessConfig(NtagType type, uint8_t* access) {
+    int configPage = getNtagConfigPage(type);
+
+    // ACCESS byte is at config page + 1, byte 0
+    if (nfc.ntag2xx_ReadPage(configPage + 1, access)) {
+        return true;
+    }
+    return false;
+}
+
+// Print comprehensive tag information to Serial
+void printTagInfo(uint8_t* uid, uint8_t uidLength, NtagType tagType) {
+    Serial.println("\n╔══════════════════════════════════════════════════════════════╗");
+    Serial.println("║                    NFC TAG INFORMATION                       ║");
+    Serial.println("╠══════════════════════════════════════════════════════════════╣");
+
+    // UID / Serial Number
+    Serial.print("║ UID:              ");
+    String uidStr = uidToString(uid, uidLength);
+    Serial.print(uidStr);
+    for (int i = uidStr.length(); i < 42; i++) Serial.print(" ");
+    Serial.println("║");
+
+    // UID Length
+    Serial.printf("║ UID Length:       %d bytes                                     ║\n", uidLength);
+
+    // Tag Type
+    String typeName = getNtagTypeName(tagType);
+    Serial.print("║ Tag Type:         ");
+    Serial.print(typeName);
+    for (int i = typeName.length(); i < 42; i++) Serial.print(" ");
+    Serial.println("║");
+
+    // Memory Capacity
+    int capacity = getNtagUserBytes(tagType);
+    Serial.printf("║ User Memory:      %d bytes                                    ║\n", capacity);
+
+    // ATQA (Answer To Request Type A) - Standard for NTAG21x
+    Serial.println("║ ATQA:             0x0044 (NTAG21x standard)                    ║");
+
+    // SAK (Select Acknowledge) - Standard for NTAG21x
+    Serial.println("║ SAK:              0x00 (NTAG21x standard)                      ║");
+
+    Serial.println("╠══════════════════════════════════════════════════════════════╣");
+    Serial.println("║                    SECURITY INFORMATION                      ║");
+    Serial.println("╠══════════════════════════════════════════════════════════════╣");
+
+    // Password Protection Status
+    uint8_t auth0 = readPasswordProtectionStatus(tagType);
+    if (auth0 == 0xFF) {
+        Serial.println("║ Password Prot.:   Disabled (no protection)                   ║");
+    } else {
+        Serial.printf("║ Password Prot.:   Enabled from page %d                        ║\n", auth0);
+    }
+
+    // Access Configuration
+    uint8_t accessData[4];
+    if (readAccessConfig(tagType, accessData)) {
+        bool prot = (accessData[0] & 0x80) != 0;  // PROT bit
+        bool cfglck = (accessData[0] & 0x40) != 0; // CFGLCK bit
+        uint8_t authlim = accessData[0] & 0x07;   // AUTHLIM bits
+
+        Serial.printf("║ Write Protect:    %s                                       ║\n", prot ? "Yes" : "No ");
+        Serial.printf("║ Config Locked:    %s                                       ║\n", cfglck ? "Yes" : "No ");
+        if (authlim == 0) {
+            Serial.println("║ Auth Attempts:    Unlimited                                  ║");
+        } else {
+            Serial.printf("║ Auth Attempts:    %d remaining                                 ║\n", authlim);
+        }
+    }
+
+    Serial.println("╠══════════════════════════════════════════════════════════════╣");
+    Serial.println("║                    ORIGINALITY SIGNATURE                     ║");
+    Serial.println("╠══════════════════════════════════════════════════════════════╣");
+
+    // Try to read originality signature
+    uint8_t signature[32];
+    if (readNtagSignature(signature)) {
+        Serial.print("║ ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("%02X", signature[i]);
+        }
+        Serial.println("             ║");
+        Serial.print("║ ");
+        for (int i = 16; i < 32; i++) {
+            Serial.printf("%02X", signature[i]);
+        }
+        Serial.println("             ║");
+    } else {
+        Serial.println("║ (Could not read signature)                                   ║");
+    }
+
+    Serial.println("╚══════════════════════════════════════════════════════════════╝");
+}
+
 String readNtagData() {
     uint8_t uid[7];
     uint8_t uidLength;
@@ -404,10 +544,12 @@ String readNtagData() {
 
     // Detect tag type
     NtagType tagType = detectNtagType();
-    Serial.printf("readNtagData: tag type = %d\n", tagType);
     if (tagType == NTAG_UNKNOWN) {
         return "{\"error\": \"Unknown tag type\"}";
     }
+
+    // Print comprehensive tag information to Serial
+    printTagInfo(uid, uidLength, tagType);
 
     int userEnd = getNtagUserEnd(tagType);
     int capacity = getNtagUserBytes(tagType);
@@ -417,20 +559,53 @@ String readNtagData() {
     String data = "";
     uint8_t pageData[4];
 
+    // Read raw data
+    Serial.println("\n┌─────────────────────────────────────────────────────────────┐");
+    Serial.println("│                       RAW TAG DATA                          │");
+    Serial.println("├─────────────────────────────────────────────────────────────┤");
+
     for (int page = NTAG_USER_START; page <= userEnd; page++) {
         if (nfc.ntag2xx_ReadPage(page, pageData)) {
+            bool foundEnd = false;
             for (int i = 0; i < 4; i++) {
                 if (pageData[i] == 0x00 || pageData[i] == 0xFE) {
-                    goto done;
+                    foundEnd = true;
+                    break;
                 }
                 data += (char)pageData[i];
             }
+            if (foundEnd) break;
         } else {
             break;
         }
     }
 
-done:
+    // Print raw hex dump of first pages (header + data start)
+    Serial.println("│ Page | Hex Data        | ASCII                              │");
+    Serial.println("├──────┼─────────────────┼────────────────────────────────────┤");
+
+    int maxPagesToShow = min(userEnd, NTAG_USER_START + 15);  // Show up to 16 pages
+    for (int page = NTAG_USER_START; page <= maxPagesToShow; page++) {
+        if (nfc.ntag2xx_ReadPage(page, pageData)) {
+            Serial.printf("│ %3d  │ %02X %02X %02X %02X     │ ", page,
+                pageData[0], pageData[1], pageData[2], pageData[3]);
+
+            // ASCII representation
+            for (int i = 0; i < 4; i++) {
+                if (pageData[i] >= 32 && pageData[i] < 127) {
+                    Serial.print((char)pageData[i]);
+                } else {
+                    Serial.print(".");
+                }
+            }
+            Serial.println("                                │");
+        }
+    }
+    if (maxPagesToShow < userEnd) {
+        Serial.println("│ ...  │ (more data)     │                                    │");
+    }
+    Serial.println("└─────────────────────────────────────────────────────────────┘");
+
     JsonDocument responseDoc;
     responseDoc["tag"]["uid"] = uidStr;
     responseDoc["tag"]["type"] = tagTypeName;
@@ -443,20 +618,50 @@ done:
         String jsonData = data.substring(jsonStart, jsonEnd + 1);
         responseDoc["tag"]["used"] = jsonData.length();
 
+        // Print parsed JSON data
+        Serial.println("\n┌─────────────────────────────────────────────────────────────┐");
+        Serial.println("│                     PARSED OPENSPOOL DATA                   │");
+        Serial.println("├─────────────────────────────────────────────────────────────┤");
+
         // Parse the data and include it
         JsonDocument dataDoc;
         if (deserializeJson(dataDoc, jsonData) == DeserializationError::Ok) {
             responseDoc["data"] = dataDoc;
+
+            // Print each field
+            if (dataDoc["protocol"].is<const char*>())
+                Serial.printf("│ Protocol:         %-40s │\n", dataDoc["protocol"].as<const char*>());
+            if (dataDoc["version"].is<const char*>())
+                Serial.printf("│ Version:          %-40s │\n", dataDoc["version"].as<const char*>());
+            if (dataDoc["brand"].is<const char*>())
+                Serial.printf("│ Brand:            %-40s │\n", dataDoc["brand"].as<const char*>());
+            if (dataDoc["type"].is<const char*>())
+                Serial.printf("│ Material Type:    %-40s │\n", dataDoc["type"].as<const char*>());
+            if (dataDoc["subtype"].is<const char*>())
+                Serial.printf("│ Subtype:          %-40s │\n", dataDoc["subtype"].as<const char*>());
+            if (dataDoc["color_hex"].is<const char*>())
+                Serial.printf("│ Color:            %-40s │\n", dataDoc["color_hex"].as<const char*>());
+            if (dataDoc["min_temp"].is<int>())
+                Serial.printf("│ Nozzle Temp:      %d - %d °C                               │\n",
+                    dataDoc["min_temp"].as<int>(), dataDoc["max_temp"].as<int>());
+            if (dataDoc["bed_min_temp"].is<int>())
+                Serial.printf("│ Bed Temp:         %d - %d °C                                │\n",
+                    dataDoc["bed_min_temp"].as<int>(), dataDoc["bed_max_temp"].as<int>());
         } else {
             responseDoc["data"] = jsonData;
+            Serial.println("│ (Could not parse JSON data)                                 │");
         }
+        Serial.println("└─────────────────────────────────────────────────────────────┘\n");
+
     } else if (data.length() == 0) {
         responseDoc["tag"]["used"] = 0;
         responseDoc["data"] = nullptr;
         responseDoc["message"] = "Tag is empty";
+        Serial.println("\n[Tag is empty - no data found]");
     } else {
         responseDoc["tag"]["used"] = 0;
         responseDoc["error"] = "No valid JSON found on tag";
+        Serial.println("\n[No valid OpenSpool JSON found on tag]");
     }
 
     String result;
@@ -486,33 +691,58 @@ bool writeNtagData(const String& jsonData) {
     String payload = jsonData;
     int dataLen = payload.length();
 
-    if (dataLen > maxBytes - 10) {
-        lastError = "Data too long for tag (" + String(dataLen) + " bytes, max " + String(maxBytes - 10) + ")";
+    // MIME type "application/json" = 16 bytes
+    const char* mimeType = "application/json";
+    int mimeTypeLen = 16;
+
+    // Calculate total NDEF record size
+    // Header (1) + Type Length (1) + Payload Length (1 or 4) + Type (16) + Payload
+    int ndefRecordSize = 1 + 1 + mimeTypeLen + dataLen;  // Without length field itself
+
+    if (dataLen + mimeTypeLen + 10 > maxBytes) {
+        lastError = "Data too long for tag (" + String(dataLen) + " bytes, max " + String(maxBytes - mimeTypeLen - 10) + ")";
         return false;
     }
 
-    uint8_t header[7];
-    int headerLen;
+    // Build NDEF message with MIME type record
+    // Format: 03 [length] D2 10 [payload_len] "application/json" [JSON data] FE
 
-    if (dataLen < 255) {
-        header[0] = 0x03;
-        header[1] = dataLen + 3;
-        header[2] = 0xD1;
-        header[3] = 0x01;
-        header[4] = dataLen;
-        header[5] = 'T';
-        headerLen = 6;
+    uint8_t header[32];  // Enough for header + mime type
+    int headerLen = 0;
+
+    // NDEF Message TLV
+    header[headerLen++] = 0x03;  // NDEF Message TLV type
+
+    // NDEF record: D2 = MB=1, ME=1, CF=0, SR=1, IL=0, TNF=0x02 (MIME media type)
+    // Total record length = 1 (header) + 1 (type len) + 1 (payload len) + 16 (type) + dataLen
+    int recordLen = 1 + 1 + 1 + mimeTypeLen + dataLen;  // For short record (payload < 256)
+
+    if (dataLen < 256) {
+        // Short record format
+        header[headerLen++] = recordLen & 0xFF;  // NDEF Message length
+        header[headerLen++] = 0xD2;              // NDEF record header (MIME type, short record)
+        header[headerLen++] = mimeTypeLen;       // Type length (16)
+        header[headerLen++] = dataLen;           // Payload length
     } else {
-        header[0] = 0x03;
-        header[1] = 0xFF;
-        header[2] = ((dataLen + 3) >> 8) & 0xFF;
-        header[3] = (dataLen + 3) & 0xFF;
-        header[4] = 0xD1;
-        header[5] = 0x01;
-        header[6] = dataLen > 255 ? 255 : dataLen;
-        headerLen = 7;
+        // Long record format (payload >= 256 bytes)
+        recordLen = 1 + 1 + 4 + mimeTypeLen + dataLen;  // 4-byte payload length
+        header[headerLen++] = 0xFF;                      // Long format marker
+        header[headerLen++] = (recordLen >> 8) & 0xFF;   // Length high byte
+        header[headerLen++] = recordLen & 0xFF;          // Length low byte
+        header[headerLen++] = 0xC2;                      // NDEF record header (MIME type, long record, SR=0)
+        header[headerLen++] = mimeTypeLen;               // Type length (16)
+        header[headerLen++] = (dataLen >> 24) & 0xFF;    // Payload length (4 bytes)
+        header[headerLen++] = (dataLen >> 16) & 0xFF;
+        header[headerLen++] = (dataLen >> 8) & 0xFF;
+        header[headerLen++] = dataLen & 0xFF;
     }
 
+    // Add MIME type string
+    for (int i = 0; i < mimeTypeLen; i++) {
+        header[headerLen++] = mimeType[i];
+    }
+
+    // Write header to tag
     int page = NTAG_USER_START;
     int byteIndex = 0;
     uint8_t pageData[4] = {0, 0, 0, 0};
@@ -530,6 +760,7 @@ bool writeNtagData(const String& jsonData) {
         }
     }
 
+    // Write JSON payload
     for (int i = 0; i < dataLen && page <= userEnd; i++) {
         pageData[byteIndex++] = payload[i];
         if (byteIndex == 4) {
@@ -543,6 +774,7 @@ bool writeNtagData(const String& jsonData) {
         }
     }
 
+    // Write terminator TLV (0xFE)
     pageData[byteIndex++] = 0xFE;
     while (byteIndex < 4) {
         pageData[byteIndex++] = 0x00;
@@ -552,6 +784,7 @@ bool writeNtagData(const String& jsonData) {
         return false;
     }
 
+    Serial.println("Tag written successfully with MIME type: application/json");
     return true;
 }
 
