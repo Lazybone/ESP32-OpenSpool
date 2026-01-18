@@ -28,6 +28,12 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
+#include <mutex>
+#include <atomic>
+#include <vector>
+
+// Firmware version
+const char* FIRMWARE_VERSION = "0.2.1";
 
 // WiFi AP Settings (Fallback/Setup Mode)
 const char* AP_SSID = "OpenSpool";
@@ -40,8 +46,35 @@ const char* MDNS_HOSTNAME = "openspool";
 #define PN532_MOSI 11
 #define PN532_SS   10
 
+// Buzzer Pin (optional - connect piezo buzzer between GPIO6 and GND)
+#define BUZZER_PIN 6
+#define BUZZER_ENABLED true  // Set to false to disable buzzer
+
 // WiFi connection timeout (ms)
 #define WIFI_TIMEOUT 15000
+
+// Task configuration
+#define SCAN_TASK_STACK_SIZE 4096
+#define SCAN_TASK_PRIORITY 1
+
+// Timing constants (ms)
+#define NFC_INIT_DELAY_MS 100
+#define NFC_RETRY_DELAY_MS 300
+#define WIFI_CHECK_INTERVAL_MS 30000
+#define LOOP_DELAY_MS 100
+
+// NFC configuration
+#define NFC_INIT_ATTEMPTS 3
+#define NFC_TAG_TIMEOUT_MS 1000
+
+// Payload limits
+#define MAX_WIFI_PAYLOAD_SIZE 512
+#define MAX_WRITE_PAYLOAD_SIZE 1024
+
+// Buzzer tone frequencies (Hz)
+#define TONE_TAG_DETECTED 1000
+#define TONE_SUCCESS 1500
+#define TONE_ERROR 400
 
 // PN532 Setup (Software SPI - more compatible)
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
@@ -52,17 +85,39 @@ AsyncWebServer server(80);
 // Preferences for storing WiFi credentials
 Preferences preferences;
 
-// Global state
+// Global state (protected by mutex for thread safety)
+std::mutex stateMutex;
 bool nfcReady = false;
 String lastError = "";
-String lastTagData = "";
 
-// WiFi state
+// WiFi state (protected by stateMutex)
 enum WifiState { WIFI_MODE_AP_ONLY, WIFI_MODE_STA_ONLY, WIFI_MODE_AP_AND_STA };
 WifiState currentWifiState = WIFI_MODE_AP_ONLY;
 String currentSSID = "";
 String currentIP = "";
 bool wifiConnected = false;
+
+// Deferred actions (to avoid blocking delay() in async handlers)
+enum PendingAction { ACTION_NONE, ACTION_WIFI_CONNECT, ACTION_WIFI_DISCONNECT, ACTION_RESTART, ACTION_OTA_RESTART };
+volatile PendingAction pendingAction = ACTION_NONE;
+String pendingSSID = "";
+String pendingPassword = "";
+unsigned long pendingActionTime = 0;
+const unsigned long ACTION_DELAY_MS = 500;
+
+// Auto-write feature
+bool autoWriteEnabled = false;
+String autoWriteData = "";  // JSON data to write automatically
+String lastWrittenTagUID = "";  // Prevent writing same tag multiple times
+unsigned long lastWriteTime = 0;
+const unsigned long AUTO_WRITE_COOLDOWN_MS = 3000;  // Cooldown between writes to same tag
+
+// Auto-write result tracking (for web notifications)
+volatile bool autoWriteResultPending = false;
+volatile bool autoWriteResultSuccess = false;
+String autoWriteResultTagUID = "";
+String autoWriteResultError = "";
+unsigned long autoWriteResultTime = 0;
 
 // NTAG21x page configuration
 #define NTAG_USER_START 4
@@ -81,6 +136,254 @@ enum NtagType { NTAG_UNKNOWN, NTAG_213, NTAG_215, NTAG_216 };
 void setupWebServer();
 void setupNFC();
 String getWiFiStatusJson();
+
+// ============== Buzzer Functions ==============
+
+void setupBuzzer() {
+    if (BUZZER_ENABLED) {
+        pinMode(BUZZER_PIN, OUTPUT);
+        digitalWrite(BUZZER_PIN, LOW);
+    }
+}
+
+// Play a tone (frequency in Hz, duration in ms)
+void playTone(int frequency, int duration) {
+    if (!BUZZER_ENABLED) return;
+    tone(BUZZER_PIN, frequency, duration);
+    delay(duration);
+    noTone(BUZZER_PIN);
+}
+
+// Short beep - tag detected
+void beepTagDetected() {
+    playTone(TONE_TAG_DETECTED, 100);
+}
+
+// Double beep - success
+void beepSuccess() {
+    playTone(TONE_SUCCESS, 100);
+    delay(50);
+    playTone(TONE_SUCCESS, 100);
+}
+
+// Long low beep - error
+void beepError() {
+    playTone(TONE_ERROR, 300);
+}
+
+// ============== End Buzzer Functions ==============
+
+// ============== Custom Filament Database ==============
+
+// Storage structure:
+// {
+//   "brands": ["Custom Brand 1", "Custom Brand 2"],
+//   "types": ["PLA+", "PETG-HT"],
+//   "presets": {
+//     "Brand|Type": { "nozzle": [min, max], "bed": [min, max] }
+//   }
+// }
+
+// Load complete filament database as JSON
+String loadFilamentDatabase() {
+    preferences.begin("filaments", true);  // Read-only
+    String data = preferences.getString("data", "{\"brands\":[],\"types\":[],\"presets\":{}}");
+    preferences.end();
+    return data;
+}
+
+// Save complete filament database from JSON
+bool saveFilamentDatabase(const String& jsonData) {
+    // Validate JSON and size
+    if (jsonData.length() > 8000) {
+        return false;  // Too large
+    }
+    
+    JsonDocument doc;
+    if (deserializeJson(doc, jsonData)) {
+        return false;  // Invalid JSON
+    }
+    
+    preferences.begin("filaments", false);  // Read-write
+    preferences.putString("data", jsonData);
+    preferences.end();
+    return true;
+}
+
+// Helper: Load database into JsonDocument
+bool loadFilamentDoc(JsonDocument& doc) {
+    String data = loadFilamentDatabase();
+    return deserializeJson(doc, data) == DeserializationError::Ok;
+}
+
+// Helper: Save JsonDocument to database
+bool saveFilamentDoc(JsonDocument& doc) {
+    String output;
+    serializeJson(doc, output);
+    return saveFilamentDatabase(output);
+}
+
+// Add a custom brand
+bool addCustomBrand(const String& brand) {
+    JsonDocument doc;
+    loadFilamentDoc(doc);
+    
+    // Check if already exists
+    JsonArray brands = doc["brands"].as<JsonArray>();
+    for (JsonVariant v : brands) {
+        if (v.as<String>() == brand) return true;  // Already exists
+    }
+    
+    // Add new brand
+    if (!doc["brands"].is<JsonArray>()) {
+        doc["brands"].to<JsonArray>();
+    }
+    doc["brands"].add(brand);
+    
+    return saveFilamentDoc(doc);
+}
+
+// Delete a custom brand
+bool deleteCustomBrand(const String& brand) {
+    JsonDocument doc;
+    loadFilamentDoc(doc);
+    
+    // Find the index of the brand to remove
+    int indexToRemove = -1;
+    JsonArray brands = doc["brands"].as<JsonArray>();
+    
+    int i = 0;
+    for (JsonVariant v : brands) {
+        if (v.as<String>() == brand) {
+            indexToRemove = i;
+            break;
+        }
+        i++;
+    }
+    
+    if (indexToRemove >= 0) {
+        doc["brands"].as<JsonArray>().remove(indexToRemove);
+    }
+    
+    // Also remove any presets using this brand
+    JsonObject presets = doc["presets"].as<JsonObject>();
+    std::vector<String> keysToRemove;
+    for (JsonPair p : presets) {
+        String key = p.key().c_str();
+        if (key.startsWith(brand + "|")) {
+            keysToRemove.push_back(key);
+        }
+    }
+    for (const String& key : keysToRemove) {
+        doc["presets"].as<JsonObject>().remove(key);
+    }
+    
+    return saveFilamentDoc(doc);
+}
+
+// Add a custom material type
+bool addCustomType(const String& type) {
+    JsonDocument doc;
+    loadFilamentDoc(doc);
+    
+    // Check if already exists
+    JsonArray types = doc["types"].as<JsonArray>();
+    for (JsonVariant v : types) {
+        if (v.as<String>() == type) return true;  // Already exists
+    }
+    
+    // Add new type
+    if (!doc["types"].is<JsonArray>()) {
+        doc["types"].to<JsonArray>();
+    }
+    doc["types"].add(type);
+    
+    return saveFilamentDoc(doc);
+}
+
+// Delete a custom material type
+bool deleteCustomType(const String& type) {
+    JsonDocument doc;
+    loadFilamentDoc(doc);
+    
+    // Find the index of the type to remove
+    int indexToRemove = -1;
+    JsonArray types = doc["types"].as<JsonArray>();
+    
+    int i = 0;
+    for (JsonVariant v : types) {
+        if (v.as<String>() == type) {
+            indexToRemove = i;
+            break;
+        }
+        i++;
+    }
+    
+    if (indexToRemove >= 0) {
+        doc["types"].as<JsonArray>().remove(indexToRemove);
+    }
+    
+    // Also remove any presets using this type
+    JsonObject presets = doc["presets"].as<JsonObject>();
+    std::vector<String> keysToRemove;
+    for (JsonPair p : presets) {
+        String key = p.key().c_str();
+        if (key.endsWith("|" + type)) {
+            keysToRemove.push_back(key);
+        }
+    }
+    for (const String& key : keysToRemove) {
+        doc["presets"].as<JsonObject>().remove(key);
+    }
+    
+    return saveFilamentDoc(doc);
+}
+
+// Save a single custom filament preset
+bool saveCustomFilament(const String& brand, const String& type, int nozzleMin, int nozzleMax, int bedMin, int bedMax) {
+    JsonDocument doc;
+    loadFilamentDoc(doc);
+    
+    // Ensure presets object exists
+    if (!doc["presets"].is<JsonObject>()) {
+        doc["presets"].to<JsonObject>();
+    }
+    
+    // Create key: "Brand|Type"
+    String key = brand + "|" + type;
+    
+    // Add/update entry
+    doc["presets"][key]["nozzle"][0] = nozzleMin;
+    doc["presets"][key]["nozzle"][1] = nozzleMax;
+    doc["presets"][key]["bed"][0] = bedMin;
+    doc["presets"][key]["bed"][1] = bedMax;
+    
+    return saveFilamentDoc(doc);
+}
+
+// Delete a single custom filament preset
+bool deleteCustomFilament(const String& brand, const String& type) {
+    JsonDocument doc;
+    loadFilamentDoc(doc);
+    
+    String key = brand + "|" + type;
+    
+    if (doc["presets"].is<JsonObject>()) {
+        doc["presets"].remove(key);
+    }
+    
+    return saveFilamentDoc(doc);
+}
+
+// Clear all custom filament data
+void clearFilamentDatabase() {
+    preferences.begin("filaments", false);
+    preferences.remove("data");
+    preferences.end();
+    Serial.println("Filament database cleared");
+}
+
+// ============== End Custom Filament Database ==============
 
 // Load saved WiFi credentials
 bool loadWiFiCredentials(String &ssid, String &password) {
@@ -122,8 +425,20 @@ void startMDNS() {
 
 // Start Access Point mode
 void startAP() {
+    // Ensure WiFi is properly initialized
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(100);
+    
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASS);
+    delay(100);
+    
+    // Configure AP with explicit channel (1) and max connections (4)
+    bool apStarted = WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 4);
+    delay(500);  // Give AP time to fully initialize
+    
+    // Set TX power to maximum for better range
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
     currentWifiState = WIFI_MODE_AP_ONLY;
     currentSSID = AP_SSID;
@@ -133,12 +448,16 @@ void startAP() {
     startMDNS();
 
     Serial.println("\n=== Access Point Mode ===");
+    Serial.print("AP Started: ");
+    Serial.println(apStarted ? "YES" : "NO");
     Serial.print("SSID: ");
     Serial.println(AP_SSID);
     Serial.print("Password: ");
     Serial.println(AP_PASS);
     Serial.print("IP: ");
     Serial.println(currentIP);
+    Serial.print("Channel: 1, TX Power: ");
+    Serial.println(WiFi.getTxPower());
 }
 
 // Start Access Point + Station mode (for configuration while connected)
@@ -229,7 +548,7 @@ void setupWiFi() {
 
 // Cached scan results
 String cachedScanResult = "{\"networks\":[]}";
-bool scanInProgress = false;
+std::atomic<bool> scanInProgress(false);
 
 // Background scan task
 void scanTask(void* parameter) {
@@ -259,7 +578,7 @@ String scanNetworks() {
     if (!scanInProgress) {
         scanInProgress = true;
         Serial.println("Starting WiFi scan task...");
-        xTaskCreatePinnedToCore(scanTask, "scanTask", 4096, NULL, 1, NULL, 0);
+        xTaskCreatePinnedToCore(scanTask, "scanTask", SCAN_TASK_STACK_SIZE, NULL, SCAN_TASK_PRIORITY, NULL, 0);
     }
     return cachedScanResult;
 }
@@ -286,23 +605,23 @@ String getWiFiStatusJson() {
 }
 
 void setupNFC() {
-    delay(100);  // Let PN532 power up
+    delay(NFC_INIT_DELAY_MS);  // Let PN532 power up
 
     // Try multiple times to connect
     uint32_t versiondata = 0;
-    for (int attempt = 1; attempt <= 3; attempt++) {
-        Serial.printf("NFC init attempt %d/3...\n", attempt);
+    for (int attempt = 1; attempt <= NFC_INIT_ATTEMPTS; attempt++) {
+        Serial.printf("NFC init attempt %d/%d...\n", attempt, NFC_INIT_ATTEMPTS);
         nfc.begin();
-        delay(100);
+        delay(NFC_INIT_DELAY_MS);
         versiondata = nfc.getFirmwareVersion();
         if (versiondata) {
             break;  // Success!
         }
-        delay(300);  // Wait before retry
+        delay(NFC_RETRY_DELAY_MS);  // Wait before retry
     }
 
     if (!versiondata) {
-        Serial.println("PN532 not found after 5 attempts!");
+        Serial.printf("PN532 not found after %d attempts!\n", NFC_INIT_ATTEMPTS);
         nfcReady = false;
         return;
     }
@@ -317,9 +636,21 @@ void setupNFC() {
     Serial.println("NFC ready!");
 }
 
-bool waitForTag(uint8_t* uid, uint8_t* uidLength, uint16_t timeout = 1000) {
+bool waitForTag(uint8_t* uid, uint8_t* uidLength, uint16_t timeout = NFC_TAG_TIMEOUT_MS) {
     nfc.setPassiveActivationRetries(timeout / 100);
-    return nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, uidLength);
+    bool success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, uidLength);
+
+    // Validate UID length (should be 4 or 7 bytes for NTAG21x)
+    if (success && (*uidLength != 4 && *uidLength != 7)) {
+        Serial.printf("Warning: Unexpected UID length: %d bytes\n", *uidLength);
+    }
+
+    // Beep on tag detection
+    if (success) {
+        beepTagDetected();
+    }
+
+    return success;
 }
 
 // Detect NTAG type by reading the Capability Container (CC) at page 3
@@ -538,14 +869,14 @@ String readNtagData() {
     Serial.println("readNtagData: waiting for tag...");
     if (!waitForTag(uid, &uidLength)) {
         Serial.println("readNtagData: no tag found");
-        return "{\"error\": \"No tag found\"}";
+        return "{\"success\": false, \"error\": \"No tag found\"}";
     }
     Serial.println("readNtagData: tag found, detecting type...");
 
     // Detect tag type
     NtagType tagType = detectNtagType();
     if (tagType == NTAG_UNKNOWN) {
-        return "{\"error\": \"Unknown tag type\"}";
+        return "{\"success\": false, \"error\": \"Unknown tag type\"}";
     }
 
     // Print comprehensive tag information to Serial
@@ -660,6 +991,7 @@ String readNtagData() {
         Serial.println("\n[Tag is empty - no data found]");
     } else {
         responseDoc["tag"]["used"] = 0;
+        responseDoc["success"] = false;
         responseDoc["error"] = "No valid JSON found on tag";
         Serial.println("\n[No valid OpenSpool JSON found on tag]");
     }
@@ -675,6 +1007,7 @@ bool writeNtagData(const String& jsonData) {
 
     if (!waitForTag(uid, &uidLength)) {
         lastError = "No tag found";
+        beepError();
         return false;
     }
 
@@ -682,6 +1015,7 @@ bool writeNtagData(const String& jsonData) {
     NtagType tagType = detectNtagType();
     if (tagType == NTAG_UNKNOWN) {
         lastError = "Unknown tag type";
+        beepError();
         return false;
     }
 
@@ -695,10 +1029,7 @@ bool writeNtagData(const String& jsonData) {
     const char* mimeType = "application/json";
     int mimeTypeLen = 16;
 
-    // Calculate total NDEF record size
-    // Header (1) + Type Length (1) + Payload Length (1 or 4) + Type (16) + Payload
-    int ndefRecordSize = 1 + 1 + mimeTypeLen + dataLen;  // Without length field itself
-
+    // Check if data fits on tag (with NDEF overhead)
     if (dataLen + mimeTypeLen + 10 > maxBytes) {
         lastError = "Data too long for tag (" + String(dataLen) + " bytes, max " + String(maxBytes - mimeTypeLen - 10) + ")";
         return false;
@@ -785,6 +1116,7 @@ bool writeNtagData(const String& jsonData) {
     }
 
     Serial.println("Tag written successfully with MIME type: application/json");
+    beepSuccess();
     return true;
 }
 
@@ -794,13 +1126,13 @@ String eraseNtagData() {
     uint8_t uidLength;
 
     if (!waitForTag(uid, &uidLength)) {
-        return "{\"error\": \"No tag found\"}";
+        return "{\"success\": false, \"error\": \"No tag found\"}";
     }
 
     // Detect tag type
     NtagType tagType = detectNtagType();
     if (tagType == NTAG_UNKNOWN) {
-        return "{\"error\": \"Unknown tag type\"}";
+        return "{\"success\": false, \"error\": \"Unknown tag type\"}";
     }
 
     int userEnd = getNtagUserEnd(tagType);
@@ -812,7 +1144,7 @@ String eraseNtagData() {
     // Write terminator to first user page, then zeros
     uint8_t terminatorPage[4] = {0x03, 0x00, 0xFE, 0x00};  // Empty NDEF message
     if (!nfc.ntag2xx_WritePage(NTAG_USER_START, terminatorPage)) {
-        return "{\"error\": \"Failed to write terminator\"}";
+        return "{\"success\": false, \"error\": \"Failed to write terminator\"}";
     }
 
     // Clear remaining pages
@@ -829,15 +1161,23 @@ String eraseNtagData() {
     doc["tag"]["uid"] = uidStr;
     doc["tag"]["type"] = tagTypeName;
 
+    beepSuccess();
+
     String result;
     serializeJson(doc, result);
     return result;
 }
 
 void setupWebServer() {
+    // Add default headers for security
+    DefaultHeaders::Instance().addHeader("X-Content-Type-Options", "nosniff");
+    DefaultHeaders::Instance().addHeader("X-Frame-Options", "DENY");
+    DefaultHeaders::Instance().addHeader("X-XSS-Protection", "1; mode=block");
+
     // API: Get combined status (NFC + WiFi)
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
+        doc["version"] = FIRMWARE_VERSION;
         doc["nfcReady"] = nfcReady;
         doc["lastError"] = lastError;
         doc["wifi"]["mode"] = currentWifiState == WIFI_MODE_AP_ONLY ? "ap" : (currentWifiState == WIFI_MODE_STA_ONLY ? "sta" : "ap_sta");
@@ -866,11 +1206,17 @@ void setupWebServer() {
         [](AsyncWebServerRequest *request) {},
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            // Limit payload size to prevent memory issues
+            if (total > MAX_WIFI_PAYLOAD_SIZE) {
+                request->send(413, "application/json", "{\"success\": false, \"error\": \"Payload too large\"}");
+                return;
+            }
+
             String body = String((char*)data).substring(0, len);
 
             JsonDocument doc;
             if (deserializeJson(doc, body)) {
-                request->send(400, "application/json", "{\"error\": \"Invalid JSON\"}");
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
                 return;
             }
 
@@ -878,7 +1224,7 @@ void setupWebServer() {
             String password = doc["password"] | "";
 
             if (ssid.length() == 0) {
-                request->send(400, "application/json", "{\"error\": \"SSID required\"}");
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"SSID required\"}");
                 return;
             }
 
@@ -887,9 +1233,11 @@ void setupWebServer() {
 
             request->send(200, "application/json", "{\"success\": true, \"message\": \"Credentials saved. Reconnecting...\"}");
 
-            // Reconnect with new credentials after response is sent
-            delay(500);
-            startAPSTA(ssid, password);
+            // Schedule reconnect (non-blocking)
+            pendingSSID = ssid;
+            pendingPassword = password;
+            pendingAction = ACTION_WIFI_CONNECT;
+            pendingActionTime = millis();
         }
     );
 
@@ -897,26 +1245,230 @@ void setupWebServer() {
     server.on("/api/wifi/disconnect", HTTP_POST, [](AsyncWebServerRequest *request) {
         clearWiFiCredentials();
         request->send(200, "application/json", "{\"success\": true, \"message\": \"Credentials cleared. Restarting in AP mode...\"}");
-        delay(500);
-        startAP();
+        // Schedule AP mode switch (non-blocking)
+        pendingAction = ACTION_WIFI_DISCONNECT;
+        pendingActionTime = millis();
     });
 
     // API: Restart device
     server.on("/api/restart", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200, "application/json", "{\"success\": true, \"message\": \"Restarting...\"}");
-        delay(500);
-        ESP.restart();
+        // Schedule restart (non-blocking)
+        pendingAction = ACTION_RESTART;
+        pendingActionTime = millis();
     });
+
+    // ============== Filament Database API ==============
+
+    // API: Get complete filament database (brands, types, presets)
+    server.on("/api/filaments", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String data = loadFilamentDatabase();
+        request->send(200, "application/json", data);
+    });
+
+    // API: Delete custom brand (register BEFORE /api/filaments/brand to avoid prefix matching)
+    server.on("/api/filaments/brand/delete", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            if (deserializeJson(doc, body)) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            String brand = doc["brand"] | "";
+            if (brand.length() == 0) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Brand name required\"}");
+                return;
+            }
+
+            if (deleteCustomBrand(brand)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(500, "application/json", "{\"success\": false, \"error\": \"Failed to delete\"}");
+            }
+        }
+    );
+
+    // API: Add custom brand
+    server.on("/api/filaments/brand", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            if (deserializeJson(doc, body)) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            String brand = doc["brand"] | "";
+            if (brand.length() == 0 || brand.length() > 32) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Brand name required (max 32 chars)\"}");
+                return;
+            }
+
+            if (addCustomBrand(brand)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(500, "application/json", "{\"success\": false, \"error\": \"Failed to save\"}");
+            }
+        }
+    );
+
+    // API: Delete custom material type (register BEFORE /api/filaments/type to avoid prefix matching)
+    server.on("/api/filaments/type/delete", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            if (deserializeJson(doc, body)) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            String type = doc["type"] | "";
+            if (type.length() == 0) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Type name required\"}");
+                return;
+            }
+
+            if (deleteCustomType(type)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(500, "application/json", "{\"success\": false, \"error\": \"Failed to delete\"}");
+            }
+        }
+    );
+
+    // API: Add custom material type
+    server.on("/api/filaments/type", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            if (deserializeJson(doc, body)) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            String type = doc["type"] | "";
+            if (type.length() == 0 || type.length() > 16) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Type name required (max 16 chars)\"}");
+                return;
+            }
+
+            if (addCustomType(type)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(500, "application/json", "{\"success\": false, \"error\": \"Failed to save\"}");
+            }
+        }
+    );
+
+    // API: Save/Update custom filament preset
+    server.on("/api/filaments", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (total > 512) {
+                request->send(413, "application/json", "{\"success\": false, \"error\": \"Payload too large\"}");
+                return;
+            }
+
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            if (deserializeJson(doc, body)) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            String brand = doc["brand"] | "";
+            String type = doc["type"] | "";
+            int nozzleMin = doc["nozzle_min"] | 200;
+            int nozzleMax = doc["nozzle_max"] | 220;
+            int bedMin = doc["bed_min"] | 50;
+            int bedMax = doc["bed_max"] | 60;
+
+            if (brand.length() == 0 || type.length() == 0) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Brand and type required\"}");
+                return;
+            }
+
+            if (saveCustomFilament(brand, type, nozzleMin, nozzleMax, bedMin, bedMax)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(500, "application/json", "{\"success\": false, \"error\": \"Failed to save\"}");
+            }
+        }
+    );
+
+    // API: Delete a custom filament preset
+    server.on("/api/filaments/delete", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            if (deserializeJson(doc, body)) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            String brand = doc["brand"] | "";
+            String type = doc["type"] | "";
+
+            if (brand.length() == 0 || type.length() == 0) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Brand and type required\"}");
+                return;
+            }
+
+            if (deleteCustomFilament(brand, type)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(500, "application/json", "{\"success\": false, \"error\": \"Failed to delete\"}");
+            }
+        }
+    );
+
+    // API: Clear all custom filament data
+    server.on("/api/filaments/reset", HTTP_POST, [](AsyncWebServerRequest *request) {
+        clearFilamentDatabase();
+        request->send(200, "application/json", "{\"success\": true, \"message\": \"Filament database cleared\"}");
+    });
+
+    // API: Import complete filament database (replaces all)
+    server.on("/api/filaments/import", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (total > 8000) {
+                request->send(413, "application/json", "{\"success\": false, \"error\": \"Payload too large (max 8KB)\"}");
+                return;
+            }
+
+            String body = String((char*)data).substring(0, len);
+            
+            if (saveFilamentDatabase(body)) {
+                request->send(200, "application/json", "{\"success\": true}");
+            } else {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON or too large\"}");
+            }
+        }
+    );
 
     // API: Read tag
     server.on("/api/read", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!nfcReady) {
-            request->send(503, "application/json", "{\"error\": \"NFC not ready\"}");
+            request->send(503, "application/json", "{\"success\": false, \"error\": \"NFC not ready\"}");
             return;
         }
 
         String data = readNtagData();
-        lastTagData = data;
         request->send(200, "application/json", data);
     });
 
@@ -925,8 +1477,14 @@ void setupWebServer() {
         [](AsyncWebServerRequest *request) {},
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            // Limit payload size (NTAG216 max is 888 bytes, add margin for NDEF overhead)
+            if (total > MAX_WRITE_PAYLOAD_SIZE) {
+                request->send(413, "application/json", "{\"success\": false, \"error\": \"Payload too large\"}");
+                return;
+            }
+
             if (!nfcReady) {
-                request->send(503, "application/json", "{\"error\": \"NFC not ready\"}");
+                request->send(503, "application/json", "{\"success\": false, \"error\": \"NFC not ready\"}");
                 return;
             }
 
@@ -935,19 +1493,19 @@ void setupWebServer() {
             JsonDocument doc;
             DeserializationError error = deserializeJson(doc, jsonData);
             if (error) {
-                request->send(400, "application/json", "{\"error\": \"Invalid JSON\"}");
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
                 return;
             }
 
             if (!doc["protocol"].is<const char*>() || !doc["version"].is<const char*>()) {
-                request->send(400, "application/json", "{\"error\": \"Missing required fields\"}");
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Missing required fields\"}");
                 return;
             }
 
             if (writeNtagData(jsonData)) {
                 request->send(200, "application/json", "{\"success\": true}");
             } else {
-                String errorResponse = "{\"error\": \"" + lastError + "\"}";
+                String errorResponse = "{\"success\": false, \"error\": \"" + lastError + "\"}";
                 request->send(500, "application/json", errorResponse);
             }
         }
@@ -956,12 +1514,104 @@ void setupWebServer() {
     // API: Erase tag
     server.on("/api/erase", HTTP_POST, [](AsyncWebServerRequest *request) {
         if (!nfcReady) {
-            request->send(503, "application/json", "{\"error\": \"NFC not ready\"}");
+            request->send(503, "application/json", "{\"success\": false, \"error\": \"NFC not ready\"}");
             return;
         }
 
         String result = eraseNtagData();
-        request->send(200, "application/json", result);
+        int statusCode = result.indexOf("\"error\"") >= 0 ? 500 : 200;
+        request->send(statusCode, "application/json", result);
+    });
+
+    // API: Get auto-write status (including last write result)
+    server.on("/api/autowrite", HTTP_GET, [](AsyncWebServerRequest *request) {
+        JsonDocument doc;
+        doc["enabled"] = autoWriteEnabled;
+        doc["hasData"] = autoWriteData.length() > 0;
+        if (autoWriteData.length() > 0) {
+            JsonDocument dataDoc;
+            deserializeJson(dataDoc, autoWriteData);
+            doc["data"] = dataDoc;
+        }
+        doc["lastTagUID"] = lastWrittenTagUID;
+        
+        // Include pending write result if available
+        if (autoWriteResultPending) {
+            doc["writeResult"]["pending"] = true;
+            doc["writeResult"]["success"] = autoWriteResultSuccess;
+            doc["writeResult"]["tagUID"] = autoWriteResultTagUID;
+            if (!autoWriteResultSuccess) {
+                doc["writeResult"]["error"] = autoWriteResultError;
+            }
+            // Clear the pending flag after it's been read
+            autoWriteResultPending = false;
+        }
+        
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: Enable/configure auto-write
+    server.on("/api/autowrite", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (total > MAX_WRITE_PAYLOAD_SIZE) {
+                request->send(413, "application/json", "{\"success\": false, \"error\": \"Payload too large\"}");
+                return;
+            }
+
+            String jsonData = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, jsonData);
+            
+            if (error) {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            // Check if this is just an enable/disable toggle
+            if (doc["enabled"].is<bool>()) {
+                autoWriteEnabled = doc["enabled"].as<bool>();
+                
+                // If enabling, data must be provided (either now or previously)
+                if (autoWriteEnabled && doc["data"].is<JsonObject>()) {
+                    String dataStr;
+                    serializeJson(doc["data"], dataStr);
+                    autoWriteData = dataStr;
+                    lastWrittenTagUID = "";  // Reset so new tag can be written
+                }
+                
+                if (autoWriteEnabled && autoWriteData.length() == 0) {
+                    autoWriteEnabled = false;
+                    request->send(400, "application/json", "{\"success\": false, \"error\": \"No data configured for auto-write\"}");
+                    return;
+                }
+                
+                Serial.printf("Auto-write %s\n", autoWriteEnabled ? "ENABLED" : "DISABLED");
+                
+                JsonDocument response;
+                response["success"] = true;
+                response["enabled"] = autoWriteEnabled;
+                response["hasData"] = autoWriteData.length() > 0;
+                
+                String responseStr;
+                serializeJson(response, responseStr);
+                request->send(200, "application/json", responseStr);
+            } else {
+                request->send(400, "application/json", "{\"success\": false, \"error\": \"Missing 'enabled' field\"}");
+            }
+        }
+    );
+
+    // API: Disable auto-write
+    server.on("/api/autowrite", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        autoWriteEnabled = false;
+        autoWriteData = "";
+        lastWrittenTagUID = "";
+        Serial.println("Auto-write DISABLED and data cleared");
+        request->send(200, "application/json", "{\"success\": true, \"enabled\": false}");
     });
 
     // API: OTA Update
@@ -970,12 +1620,13 @@ void setupWebServer() {
             bool success = !Update.hasError();
             AsyncWebServerResponse *response = request->beginResponse(200, "application/json",
                 success ? "{\"success\": true, \"message\": \"Update successful. Restarting...\"}"
-                        : "{\"error\": \"Update failed\"}");
+                        : "{\"success\": false, \"error\": \"Update failed\"}");
             response->addHeader("Connection", "close");
             request->send(response);
             if (success) {
-                delay(500);
-                ESP.restart();
+                // Schedule restart after OTA (non-blocking)
+                pendingAction = ACTION_OTA_RESTART;
+                pendingActionTime = millis();
             }
         },
         [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -1017,12 +1668,25 @@ void setup() {
     Serial.println("\n=== ESP32-OpenSpool ===");
     Serial.println("NTAG21x Reader/Writer (213/215/216)");
 
-    // Initialize LittleFS
-    if (!LittleFS.begin(true)) {
-        Serial.println("LittleFS mount failed!");
+    // Initialize LittleFS with recovery
+    if (!LittleFS.begin(false)) {
+        Serial.println("LittleFS mount failed, attempting format...");
+        if (LittleFS.format()) {
+            Serial.println("LittleFS formatted successfully");
+            if (LittleFS.begin(false)) {
+                Serial.println("LittleFS mounted after format");
+            } else {
+                Serial.println("LittleFS mount failed after format - web UI unavailable");
+            }
+        } else {
+            Serial.println("LittleFS format failed - web UI unavailable");
+        }
     } else {
         Serial.println("LittleFS mounted");
     }
+
+    // Setup Buzzer
+    setupBuzzer();
 
     // Setup WiFi (AP or connect to saved network)
     setupWiFi();
@@ -1034,12 +1698,39 @@ void setup() {
     setupWebServer();
 
     Serial.println("\n=== Ready ===");
+    beepSuccess();  // Ready beep
 }
 
 void loop() {
+    // Process pending actions (deferred from async handlers)
+    if (pendingAction != ACTION_NONE && millis() - pendingActionTime >= ACTION_DELAY_MS) {
+        PendingAction action = pendingAction;
+        pendingAction = ACTION_NONE;
+        
+        switch (action) {
+            case ACTION_WIFI_CONNECT:
+                Serial.println("Executing deferred WiFi connect...");
+                startAPSTA(pendingSSID, pendingPassword);
+                pendingSSID = "";
+                pendingPassword = "";
+                break;
+            case ACTION_WIFI_DISCONNECT:
+                Serial.println("Executing deferred WiFi disconnect...");
+                startAP();
+                break;
+            case ACTION_RESTART:
+            case ACTION_OTA_RESTART:
+                Serial.println("Executing deferred restart...");
+                ESP.restart();
+                break;
+            default:
+                break;
+        }
+    }
+
     // Check WiFi connection status periodically
     static unsigned long lastCheck = 0;
-    if (millis() - lastCheck > 30000) {  // Every 30 seconds
+    if (millis() - lastCheck > WIFI_CHECK_INTERVAL_MS) {
         lastCheck = millis();
 
         if (currentWifiState == WIFI_MODE_AP_AND_STA || currentWifiState == WIFI_MODE_STA_ONLY) {
@@ -1055,5 +1746,65 @@ void loop() {
         }
     }
 
-    delay(100);
+    // Auto-write feature: check for tags and write automatically
+    if (autoWriteEnabled && nfcReady && autoWriteData.length() > 0) {
+        static unsigned long lastAutoWriteCheck = 0;
+        if (millis() - lastAutoWriteCheck > 500) {  // Check every 500ms
+            lastAutoWriteCheck = millis();
+            
+            uint8_t uid[7];
+            uint8_t uidLength;
+            
+            // Try to detect a tag (short timeout)
+            nfc.setPassiveActivationRetries(2);
+            if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) {
+                // Convert UID to string for comparison
+                String currentTagUID = "";
+                for (uint8_t i = 0; i < uidLength; i++) {
+                    if (uid[i] < 0x10) currentTagUID += "0";
+                    currentTagUID += String(uid[i], HEX);
+                }
+                currentTagUID.toUpperCase();
+                
+                // Check if this is a new tag or cooldown has passed
+                bool shouldWrite = (currentTagUID != lastWrittenTagUID) || 
+                                   (millis() - lastWriteTime > AUTO_WRITE_COOLDOWN_MS);
+                
+                if (shouldWrite) {
+                    Serial.println("\n=== Auto-Write Triggered ===");
+                    Serial.print("Tag UID: ");
+                    Serial.println(currentTagUID);
+                    
+                    beepTagDetected();
+                    
+                    if (writeNtagData(autoWriteData)) {
+                        Serial.println("Auto-write SUCCESS!");
+                        beepSuccess();
+                        lastWrittenTagUID = currentTagUID;
+                        lastWriteTime = millis();
+                        
+                        // Store result for web notification
+                        autoWriteResultPending = true;
+                        autoWriteResultSuccess = true;
+                        autoWriteResultTagUID = currentTagUID;
+                        autoWriteResultError = "";
+                        autoWriteResultTime = millis();
+                    } else {
+                        Serial.print("Auto-write FAILED: ");
+                        Serial.println(lastError);
+                        beepError();
+                        
+                        // Store result for web notification
+                        autoWriteResultPending = true;
+                        autoWriteResultSuccess = false;
+                        autoWriteResultTagUID = currentTagUID;
+                        autoWriteResultError = lastError;
+                        autoWriteResultTime = millis();
+                    }
+                }
+            }
+        }
+    }
+
+    delay(LOOP_DELAY_MS);
 }

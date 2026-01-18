@@ -1,0 +1,18 @@
+{
+  "name": "ESP32-OpenSpool",
+  "short_name": "OpenSpool",
+  "description": "NFC Tag Reader/Writer for OpenSpool Protocol",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1a",
+  "theme_color": "#ff6b35",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

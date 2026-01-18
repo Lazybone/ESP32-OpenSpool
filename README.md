@@ -6,6 +6,10 @@ A standalone NTAG21x NFC tag reader/writer for the [OpenSpool](https://github.co
 
 - **Standalone Device**: No computer required after initial setup - just power and use
 - **Web Interface**: Modern, responsive dark-mode UI accessible from any device
+- **Progressive Web App (PWA)**: Install on your phone's homescreen for app-like experience
+- **Filament Database**: Auto-fill temperatures for popular brands (Bambu Lab, Prusament, eSun, etc.)
+- **Custom Filaments**: Add your own brands, material types, and temperature presets
+- **Sound Feedback**: Optional piezo buzzer for audible feedback on tag operations
 - **mDNS Support**: Access via `http://openspool.local` - no need to remember IP addresses
 - **Flexible WiFi**: Connect to existing network OR use as standalone access point
 - **WiFi Manager**: Built-in network scanner and configuration via web UI
@@ -26,6 +30,7 @@ A standalone NTAG21x NFC tag reader/writer for the [OpenSpool](https://github.co
 | PN532 NFC Module | NFC/RFID module with SPI interface |
 | NTAG21x Tags | NTAG213, NTAG215, or NTAG216 NFC tags |
 | USB-C Cable | For power and initial programming |
+| Piezo Buzzer | (Optional) For sound feedback - connect to GPIO6 |
 
 ## Wiring Diagram
 
@@ -39,6 +44,17 @@ Connect the PN532 module to the ESP32-S3 Zero via SPI:
 | MISO | GPIO13 |
 | MOSI | GPIO11 |
 | SS (CS) | GPIO10 |
+
+### Optional: Piezo Buzzer
+
+For audible feedback on tag operations, connect a piezo buzzer:
+
+| Buzzer Pin | ESP32-S3 Zero Pin |
+|------------|-------------------|
+| + (Signal) | GPIO6 |
+| - (GND) | GND |
+
+> **Note**: The buzzer is optional. To disable sound, set `BUZZER_ENABLED` to `false` in `main.cpp`.
 
 > **Note**: Make sure your PN532 module is set to SPI mode. Most modules have a DIP switch or solder jumpers to select the communication mode.
 
@@ -288,10 +304,12 @@ The ESP32 provides a REST API for integration:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/status` | GET | Get NFC and WiFi status |
+| `/api/status` | GET | Get NFC and WiFi status (includes firmware version) |
 | `/api/read` | GET | Read tag data (includes tag info) |
 | `/api/write` | POST | Write JSON data to tag |
 | `/api/erase` | POST | Erase all data from tag |
+
+> **Note**: All API endpoints return JSON with a `success` field (`true`/`false`) and an `error` field on failure.
 
 ### WiFi Endpoints
 
@@ -303,16 +321,38 @@ The ESP32 provides a REST API for integration:
 | `/api/wifi/disconnect` | POST | Forget saved network |
 | `/api/restart` | POST | Restart the device |
 
+### Filament Database Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/filaments` | GET | Get complete filament database (brands, types, presets) |
+| `/api/filaments` | POST | Save/update a temperature preset |
+| `/api/filaments/brand` | POST | Add a custom brand |
+| `/api/filaments/brand/delete` | POST | Delete a custom brand |
+| `/api/filaments/type` | POST | Add a custom material type |
+| `/api/filaments/type/delete` | POST | Delete a custom material type |
+| `/api/filaments/delete` | POST | Delete a specific preset |
+| `/api/filaments/reset` | POST | Clear all custom data |
+| `/api/filaments/import` | POST | Bulk import from JSON |
+
 ### System Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/ota` | POST | Upload new firmware (multipart/form-data) |
 
+### Example: Get Status via API
+
+```bash
+curl http://192.168.4.1/api/status
+# Returns: {"version":"0.1.7","nfcReady":true,"wifi":{"mode":"ap_sta","connected":true,...}}
+```
+
 ### Example: Read Tag via API
 
 ```bash
 curl http://192.168.4.1/api/read
+# Returns: {"tag":{"uid":"04:A1:B2:C3:D4:E5:F6","type":"NTAG215","capacity":504},"data":{...}}
 ```
 
 ### Example: Write Tag via API
@@ -321,6 +361,7 @@ curl http://192.168.4.1/api/read
 curl -X POST http://192.168.4.1/api/write \
   -H "Content-Type: application/json" \
   -d '{"protocol":"openspool","version":"1.0","brand":"Generic","type":"PLA","color_hex":"#FF0000","min_temp":190,"max_temp":220,"bed_min_temp":50,"bed_max_temp":60}'
+# Returns: {"success":true} or {"success":false,"error":"No tag found"}
 ```
 
 ### Example: Connect to WiFi via API
@@ -370,10 +411,14 @@ curl -X POST http://192.168.4.1/api/wifi/connect \
 
 ## Technical Details
 
+### Current Version
+
+**Firmware**: v0.2.1 (see [CHANGELOG.md](CHANGELOG.md) for details)
+
 ### Memory Usage
 
-- **Flash**: ~32% (1.07 MB of 3.34 MB)
-- **RAM**: ~14% (45 KB of 328 KB)
+- **Flash**: ~70% (914 KB of 1.3 MB app partition)
+- **RAM**: ~14% (47 KB of 320 KB)
 
 ### NTAG21x Specifications
 
@@ -422,10 +467,18 @@ Edit `src/main.cpp`:
 ESP32-OpenSpool/
 ├── platformio.ini      # PlatformIO configuration
 ├── README.md           # This file
+├── CHANGELOG.md        # Version history
 ├── src/
 │   └── main.cpp        # Main firmware (NFC + WebServer)
-└── data/
-    └── index.html      # Web UI (uploaded to LittleFS)
+├── data/
+│   ├── index.html      # Web UI (single-page app)
+│   ├── manifest.json   # PWA manifest
+│   ├── sw.js           # Service Worker for offline support
+│   └── icon.svg        # App icon
+└── release/            # Pre-built binaries (not in repo)
+    ├── ESP32-OpenSpool-vX.X.X-full.bin      # Complete flash image
+    ├── ESP32-OpenSpool-vX.X.X-firmware.bin  # Firmware only
+    └── ESP32-OpenSpool-vX.X.X-littlefs.bin  # Web UI only
 ```
 
 ## Contributing

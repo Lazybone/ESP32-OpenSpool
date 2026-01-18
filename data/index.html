@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>ESP32-OpenSpool</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="NFC Tag Reader/Writer for OpenSpool Protocol">
+    <meta name="theme-color" content="#ff6b35">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="OpenSpool">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icon.svg">
+    <link rel="icon" type="image/svg+xml" href="/icon.svg">
     <style>
         * {
             margin: 0;
@@ -363,6 +373,42 @@
             background: #e53935;
         }
 
+        /* Auto-Write Toggle Styles */
+        .toggle-switch {
+            width: 50px;
+            height: 26px;
+            background: #3d3d3d;
+            border-radius: 13px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .toggle-switch .toggle-knob {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background: #888;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+        
+        .toggle-switch.active {
+            background: #ff6b35;
+        }
+        
+        .toggle-switch.active .toggle-knob {
+            left: 27px;
+            background: #fff;
+        }
+        
+        #autoWriteStatus.active {
+            background: #ff6b35;
+            color: #fff;
+        }
+
         .btn-full {
             grid-column: 1 / -1;
         }
@@ -486,6 +532,17 @@
             text-decoration: none;
         }
 
+        .custom-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #3d3d3d;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            color: #fff;
+        }
+
         @media (max-width: 480px) {
             .btn-row {
                 grid-template-columns: 1fr;
@@ -517,38 +574,44 @@
 
             <div class="form-group">
                 <label>Brand</label>
-                <select id="brand">
-                    <option value="Bambu Lab">Bambu Lab</option>
-                    <option value="Hatchbox">Hatchbox</option>
-                    <option value="eSun">eSun</option>
-                    <option value="Overture">Overture</option>
-                    <option value="SUNLU">SUNLU</option>
-                    <option value="Polymaker">Polymaker</option>
-                    <option value="Prusament">Prusament</option>
-                    <option value="Jayo">Jayo</option>
-                    <option value="Generic" selected>Generic</option>
-                </select>
+                <div style="display: flex; gap: 8px;">
+                    <select id="brand" style="flex: 1;">
+                        <option value="Bambu Lab">Bambu Lab</option>
+                        <option value="Hatchbox">Hatchbox</option>
+                        <option value="eSun">eSun</option>
+                        <option value="Overture">Overture</option>
+                        <option value="SUNLU">SUNLU</option>
+                        <option value="Polymaker">Polymaker</option>
+                        <option value="Prusament">Prusament</option>
+                        <option value="Jayo">Jayo</option>
+                        <option value="Generic" selected>Generic</option>
+                    </select>
+                    <button class="btn btn-secondary" style="padding: 0 12px; font-size: 1.2rem;" onclick="openBrandModal()" title="Add custom brand">+</button>
+                </div>
             </div>
 
             <div class="form-group">
                 <label>Material Type</label>
-                <select id="type">
-                    <option value="PLA" selected>PLA</option>
-                    <option value="PETG">PETG</option>
-                    <option value="ABS">ABS</option>
-                    <option value="ASA">ASA</option>
-                    <option value="TPU">TPU</option>
-                    <option value="PA">PA (Nylon)</option>
-                    <option value="PA12">PA12</option>
-                    <option value="PC">PC (Polycarbonate)</option>
-                    <option value="PEEK">PEEK</option>
-                    <option value="PVA">PVA</option>
-                    <option value="HIPS">HIPS</option>
-                    <option value="PCTG">PCTG</option>
-                    <option value="PLA-CF">PLA-CF</option>
-                    <option value="PETG-CF">PETG-CF</option>
-                    <option value="PA-CF">PA-CF</option>
-                </select>
+                <div style="display: flex; gap: 8px;">
+                    <select id="type" style="flex: 1;">
+                        <option value="PLA" selected>PLA</option>
+                        <option value="PETG">PETG</option>
+                        <option value="ABS">ABS</option>
+                        <option value="ASA">ASA</option>
+                        <option value="TPU">TPU</option>
+                        <option value="PA">PA (Nylon)</option>
+                        <option value="PA12">PA12</option>
+                        <option value="PC">PC (Polycarbonate)</option>
+                        <option value="PEEK">PEEK</option>
+                        <option value="PVA">PVA</option>
+                        <option value="HIPS">HIPS</option>
+                        <option value="PCTG">PCTG</option>
+                        <option value="PLA-CF">PLA-CF</option>
+                        <option value="PETG-CF">PETG-CF</option>
+                        <option value="PA-CF">PA-CF</option>
+                    </select>
+                    <button class="btn btn-secondary" style="padding: 0 12px; font-size: 1.2rem;" onclick="openTypeModal()" title="Add custom material type">+</button>
+                </div>
             </div>
 
             <div class="form-group">
@@ -605,7 +668,16 @@
         </div>
 
         <div class="card">
-            <h2 class="card-title">Temperature Settings</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #3d3d3d;">
+                <h2 class="card-title" style="margin: 0; padding: 0; border: none;">Temperature Settings</h2>
+                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.85rem;" onclick="openFilamentModal()">Customize</button>
+            </div>
+            <small id="tempHint" style="color: #4caf50; font-size: 0.75rem; display: none; margin-bottom: 10px;">
+                Auto-filled from filament database
+            </small>
+            <small id="customHint" style="color: #ff6b35; font-size: 0.75rem; display: none; margin-bottom: 10px;">
+                Using custom preset
+            </small>
 
             <div class="temp-row">
                 <div class="form-group">
@@ -662,6 +734,22 @@
             <div class="btn-row" style="margin-top: 10px;">
                 <button class="btn btn-danger btn-full" id="btnErase" onclick="eraseTag()">Erase Tag</button>
             </div>
+            
+            <!-- Auto-Write Feature -->
+            <div class="auto-write-section" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #3d3d3d;">
+                <div class="toggle-container" style="display: flex; align-items: center; justify-content: space-between;">
+                    <span style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-weight: 500;">Auto-Write Mode</span>
+                        <span id="autoWriteStatus" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 10px; background: #3d3d3d; color: #888;">OFF</span>
+                    </span>
+                    <div id="autoWriteSwitch" class="toggle-switch" onclick="clickAutoWriteToggle()">
+                        <div class="toggle-knob"></div>
+                    </div>
+                </div>
+                <input type="checkbox" id="autoWriteToggle" onchange="toggleAutoWrite()" style="display: none;">
+                <p style="font-size: 0.8rem; color: #888; margin-top: 8px;">When enabled, tags will be written automatically with the current filament data when placed on the reader.</p>
+            </div>
+            
             <div class="message" id="message"></div>
             <div class="json-preview" id="jsonPreview" style="display: none;"></div>
         </div>
@@ -737,11 +825,586 @@
                     <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
                 </a>
             </p>
-            <p style="font-size: 0.7rem;">v0.1.0</p>
+            <p style="font-size: 0.7rem;">v0.2.0</p>
         </footer>
     </div>
 
     <script>
+        // Filament Database with temperature presets
+        const filamentDatabase = {
+            // Generic defaults for each material type
+            '_default': {
+                'PLA':     { nozzle: [190, 220], bed: [50, 60] },
+                'PETG':    { nozzle: [230, 250], bed: [70, 80] },
+                'ABS':     { nozzle: [240, 260], bed: [90, 110] },
+                'ASA':     { nozzle: [240, 260], bed: [90, 110] },
+                'TPU':     { nozzle: [210, 230], bed: [40, 60] },
+                'PA':      { nozzle: [250, 270], bed: [80, 100] },
+                'PA12':    { nozzle: [250, 270], bed: [80, 100] },
+                'PC':      { nozzle: [260, 290], bed: [100, 120] },
+                'PEEK':    { nozzle: [360, 400], bed: [120, 150] },
+                'PVA':     { nozzle: [180, 200], bed: [45, 60] },
+                'HIPS':    { nozzle: [220, 240], bed: [90, 110] },
+                'PCTG':    { nozzle: [240, 260], bed: [70, 80] },
+                'PLA-CF':  { nozzle: [200, 230], bed: [50, 60] },
+                'PETG-CF': { nozzle: [240, 260], bed: [70, 80] },
+                'PA-CF':   { nozzle: [260, 280], bed: [80, 100] }
+            },
+            // Brand-specific overrides
+            'Bambu Lab': {
+                'PLA':     { nozzle: [190, 220], bed: [35, 55] },
+                'PETG':    { nozzle: [230, 260], bed: [70, 80] },
+                'ABS':     { nozzle: [240, 270], bed: [90, 100] },
+                'ASA':     { nozzle: [240, 270], bed: [90, 100] },
+                'TPU':     { nozzle: [220, 240], bed: [35, 50] },
+                'PA':      { nozzle: [270, 290], bed: [85, 95] },
+                'PA-CF':   { nozzle: [270, 290], bed: [85, 95] },
+                'PC':      { nozzle: [260, 280], bed: [100, 110] },
+                'PVA':     { nozzle: [190, 210], bed: [35, 55] },
+                'PLA-CF':  { nozzle: [210, 230], bed: [35, 55] }
+            },
+            'Prusament': {
+                'PLA':     { nozzle: [200, 220], bed: [50, 60] },
+                'PETG':    { nozzle: [230, 250], bed: [80, 90] },
+                'ASA':     { nozzle: [250, 260], bed: [100, 110] },
+                'PA':      { nozzle: [265, 275], bed: [85, 95] },
+                'PC':      { nozzle: [265, 275], bed: [105, 115] },
+                'PVA':     { nozzle: [195, 210], bed: [50, 60] }
+            },
+            'eSun': {
+                'PLA':     { nozzle: [195, 220], bed: [45, 60] },
+                'PLA+':    { nozzle: [205, 225], bed: [55, 65] },
+                'PETG':    { nozzle: [230, 250], bed: [70, 85] },
+                'ABS':     { nozzle: [230, 260], bed: [95, 110] },
+                'ABS+':    { nozzle: [235, 255], bed: [100, 110] },
+                'ASA':     { nozzle: [235, 255], bed: [95, 105] },
+                'TPU':     { nozzle: [210, 230], bed: [40, 60] },
+                'PA-CF':   { nozzle: [260, 280], bed: [80, 95] }
+            },
+            'Polymaker': {
+                'PLA':     { nozzle: [190, 220], bed: [25, 60] },
+                'PETG':    { nozzle: [230, 250], bed: [70, 80] },
+                'ABS':     { nozzle: [245, 265], bed: [90, 100] },
+                'ASA':     { nozzle: [240, 260], bed: [90, 100] },
+                'TPU':     { nozzle: [210, 230], bed: [25, 50] },
+                'PA':      { nozzle: [250, 270], bed: [80, 90] },
+                'PC':      { nozzle: [250, 270], bed: [90, 105] },
+                'PVA':     { nozzle: [185, 200], bed: [45, 60] }
+            },
+            'Hatchbox': {
+                'PLA':     { nozzle: [180, 210], bed: [45, 60] },
+                'PETG':    { nozzle: [220, 245], bed: [70, 80] },
+                'ABS':     { nozzle: [230, 250], bed: [95, 110] },
+                'TPU':     { nozzle: [210, 225], bed: [30, 50] }
+            },
+            'Overture': {
+                'PLA':     { nozzle: [190, 220], bed: [50, 60] },
+                'PETG':    { nozzle: [230, 250], bed: [70, 85] },
+                'ABS':     { nozzle: [230, 250], bed: [95, 110] },
+                'TPU':     { nozzle: [210, 230], bed: [40, 60] }
+            },
+            'SUNLU': {
+                'PLA':     { nozzle: [190, 220], bed: [50, 60] },
+                'PLA+':    { nozzle: [200, 230], bed: [55, 65] },
+                'PETG':    { nozzle: [230, 250], bed: [70, 80] },
+                'ABS':     { nozzle: [230, 260], bed: [90, 110] },
+                'ASA':     { nozzle: [230, 260], bed: [90, 100] },
+                'TPU':     { nozzle: [200, 230], bed: [40, 60] }
+            },
+            'Jayo': {
+                'PLA':     { nozzle: [190, 220], bed: [45, 60] },
+                'PETG':    { nozzle: [220, 250], bed: [65, 80] },
+                'ABS':     { nozzle: [230, 260], bed: [90, 110] },
+                'TPU':     { nozzle: [200, 230], bed: [40, 55] }
+            }
+        };
+
+        // Custom filament database (loaded from ESP32)
+        // Structure: { brands: [], types: [], presets: { "Brand|Type": {nozzle:[min,max], bed:[min,max]} } }
+        let filamentDB = { brands: [], types: [], presets: {} };
+
+        // Built-in brands and types (for dropdown extension)
+        const builtInBrands = ['Bambu Lab', 'Hatchbox', 'eSun', 'Overture', 'SUNLU', 'Polymaker', 'Prusament', 'Jayo', 'Generic'];
+        const builtInTypes = ['PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'PA', 'PA12', 'PC', 'PEEK', 'PVA', 'HIPS', 'PCTG', 'PLA-CF', 'PETG-CF', 'PA-CF'];
+
+        // Load filament database from ESP32
+        async function loadFilamentDatabase() {
+            try {
+                const response = await fetch('/api/filaments');
+                const data = await response.json();
+                filamentDB = {
+                    brands: data.brands || [],
+                    types: data.types || [],
+                    presets: data.presets || {}
+                };
+                updateDropdowns();
+            } catch (e) {
+                filamentDB = { brands: [], types: [], presets: {} };
+            }
+        }
+
+        // Legacy alias for compatibility
+        async function loadCustomFilaments() {
+            return loadFilamentDatabase();
+        }
+
+        // Update brand/type dropdowns with custom entries
+        function updateDropdowns() {
+            const brandSelect = document.getElementById('brand');
+            const typeSelect = document.getElementById('type');
+            
+            // Save current selections
+            const currentBrand = brandSelect.value;
+            const currentType = typeSelect.value;
+            
+            // Remove custom entries (keep built-in)
+            Array.from(brandSelect.options).forEach(opt => {
+                if (opt.dataset.custom === 'true') opt.remove();
+            });
+            Array.from(typeSelect.options).forEach(opt => {
+                if (opt.dataset.custom === 'true') opt.remove();
+            });
+            
+            // Add custom brands before "Generic"
+            const genericOption = Array.from(brandSelect.options).find(o => o.value === 'Generic');
+            filamentDB.brands.forEach(brand => {
+                if (!builtInBrands.includes(brand)) {
+                    const opt = document.createElement('option');
+                    opt.value = brand;
+                    opt.textContent = brand;
+                    opt.dataset.custom = 'true';
+                    if (genericOption) {
+                        brandSelect.insertBefore(opt, genericOption);
+                    } else {
+                        brandSelect.appendChild(opt);
+                    }
+                }
+            });
+            
+            // Add custom types at the end
+            filamentDB.types.forEach(type => {
+                if (!builtInTypes.includes(type)) {
+                    const opt = document.createElement('option');
+                    opt.value = type;
+                    opt.textContent = type;
+                    opt.dataset.custom = 'true';
+                    typeSelect.appendChild(opt);
+                }
+            });
+            
+            // Restore selections (might be custom values now available)
+            brandSelect.value = currentBrand;
+            typeSelect.value = currentType;
+        }
+
+        // Get temperature preset for brand/type combination
+        function getFilamentPreset(brand, type) {
+            const key = brand + '|' + type;
+            
+            // Check custom presets first (from new database structure)
+            if (filamentDB.presets && filamentDB.presets[key]) {
+                return {
+                    nozzle: filamentDB.presets[key].nozzle,
+                    bed: filamentDB.presets[key].bed,
+                    isCustom: true
+                };
+            }
+            
+            // Try brand-specific from built-in database
+            if (filamentDatabase[brand] && filamentDatabase[brand][type]) {
+                return { ...filamentDatabase[brand][type], isCustom: false };
+            }
+            // Fall back to default for material type
+            if (filamentDatabase['_default'][type]) {
+                return { ...filamentDatabase['_default'][type], isCustom: false };
+            }
+            // Ultimate fallback
+            return { nozzle: [200, 220], bed: [50, 60], isCustom: false };
+        }
+
+        // Apply preset temperatures
+        function applyFilamentPreset() {
+            const brand = document.getElementById('brand').value;
+            const type = document.getElementById('type').value;
+            const preset = getFilamentPreset(brand, type);
+
+            document.getElementById('minTemp').value = preset.nozzle[0];
+            document.getElementById('maxTemp').value = preset.nozzle[1];
+            document.getElementById('bedMinTemp').value = preset.bed[0];
+            document.getElementById('bedMaxTemp').value = preset.bed[1];
+
+            // Show appropriate hint
+            const tempHint = document.getElementById('tempHint');
+            const customHint = document.getElementById('customHint');
+            
+            if (preset.isCustom) {
+                tempHint.style.display = 'none';
+                customHint.style.display = 'block';
+                setTimeout(() => { customHint.style.display = 'none'; }, 3000);
+            } else {
+                customHint.style.display = 'none';
+                tempHint.style.display = 'block';
+                setTimeout(() => { tempHint.style.display = 'none'; }, 3000);
+            }
+        }
+
+        // ============== Filament Modal Functions ==============
+
+        function openFilamentModal() {
+            const brand = document.getElementById('brand').value;
+            const type = document.getElementById('type').value;
+            const preset = getFilamentPreset(brand, type);
+
+            document.getElementById('filamentModalSubtitle').textContent = brand + ' ' + type;
+            document.getElementById('customNozzleMin').value = preset.nozzle[0];
+            document.getElementById('customNozzleMax').value = preset.nozzle[1];
+            document.getElementById('customBedMin').value = preset.bed[0];
+            document.getElementById('customBedMax').value = preset.bed[1];
+            document.getElementById('filamentMessage').className = 'message';
+            document.getElementById('filamentModal').classList.add('active');
+        }
+
+        function closeFilamentModal() {
+            document.getElementById('filamentModal').classList.remove('active');
+        }
+
+        // ============== Brand Modal Functions ==============
+
+        function openBrandModal() {
+            document.getElementById('newBrandInput').value = '';
+            document.getElementById('brandMessage').className = 'message';
+            updateBrandList();
+            document.getElementById('brandModal').classList.add('active');
+        }
+
+        function closeBrandModal() {
+            document.getElementById('brandModal').classList.remove('active');
+        }
+
+        function showBrandMessage(text, type) {
+            const msg = document.getElementById('brandMessage');
+            msg.textContent = text;
+            msg.className = 'message ' + type;
+        }
+
+        function updateBrandList() {
+            const list = document.getElementById('brandList');
+            if (filamentDB.brands.length === 0) {
+                list.innerHTML = '<span style="color:#666;font-size:0.85rem;">No custom brands added yet</span>';
+            } else {
+                list.innerHTML = filamentDB.brands.map(b => 
+                    `<span class="custom-tag">${escapeHtml(b)} <span onclick="deleteCustomBrand('${escapeHtml(b)}')" style="cursor:pointer;color:#f44336;">x</span></span>`
+                ).join('');
+            }
+        }
+
+        async function addBrandFromModal() {
+            const input = document.getElementById('newBrandInput');
+            const brand = input.value.trim();
+            if (!brand) {
+                showBrandMessage('Please enter a brand name', 'error');
+                return;
+            }
+            if (builtInBrands.includes(brand) || filamentDB.brands.includes(brand)) {
+                showBrandMessage('Brand already exists', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/filaments/brand', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brand })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showBrandMessage('Brand added!', 'success');
+                    input.value = '';
+                    await loadFilamentDatabase();
+                    updateBrandList();
+                    // Select the new brand
+                    document.getElementById('brand').value = brand;
+                } else {
+                    showBrandMessage(result.error || 'Failed to add brand', 'error');
+                }
+            } catch (e) {
+                showBrandMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteCustomBrand(brand) {
+            if (!confirm(`Delete brand "${brand}" and all its presets?`)) return;
+
+            try {
+                const response = await fetch('/api/filaments/brand/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brand })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showBrandMessage('Brand deleted', 'success');
+                    await loadFilamentDatabase();
+                    updateBrandList();
+                } else {
+                    showBrandMessage(result.error || 'Failed to delete', 'error');
+                }
+            } catch (e) {
+                showBrandMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        // ============== Type Modal Functions ==============
+
+        function openTypeModal() {
+            document.getElementById('newTypeInput').value = '';
+            document.getElementById('typeMessage').className = 'message';
+            updateTypeList();
+            document.getElementById('typeModal').classList.add('active');
+        }
+
+        function closeTypeModal() {
+            document.getElementById('typeModal').classList.remove('active');
+        }
+
+        function showTypeMessage(text, type) {
+            const msg = document.getElementById('typeMessage');
+            msg.textContent = text;
+            msg.className = 'message ' + type;
+        }
+
+        function updateTypeList() {
+            const list = document.getElementById('typeList');
+            if (filamentDB.types.length === 0) {
+                list.innerHTML = '<span style="color:#666;font-size:0.85rem;">No custom types added yet</span>';
+            } else {
+                list.innerHTML = filamentDB.types.map(t => 
+                    `<span class="custom-tag">${escapeHtml(t)} <span onclick="deleteCustomType('${escapeHtml(t)}')" style="cursor:pointer;color:#f44336;">x</span></span>`
+                ).join('');
+            }
+        }
+
+        async function addTypeFromModal() {
+            const input = document.getElementById('newTypeInput');
+            const type = input.value.trim();
+            if (!type) {
+                showTypeMessage('Please enter a material type', 'error');
+                return;
+            }
+            if (builtInTypes.includes(type) || filamentDB.types.includes(type)) {
+                showTypeMessage('Type already exists', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/filaments/type', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showTypeMessage('Type added!', 'success');
+                    input.value = '';
+                    await loadFilamentDatabase();
+                    updateTypeList();
+                    // Select the new type
+                    document.getElementById('type').value = type;
+                } else {
+                    showTypeMessage(result.error || 'Failed to add type', 'error');
+                }
+            } catch (e) {
+                showTypeMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteCustomType(type) {
+            if (!confirm(`Delete material type "${type}" and all its presets?`)) return;
+
+            try {
+                const response = await fetch('/api/filaments/type/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showTypeMessage('Type deleted', 'success');
+                    await loadFilamentDatabase();
+                    updateTypeList();
+                } else {
+                    showTypeMessage(result.error || 'Failed to delete', 'error');
+                }
+            } catch (e) {
+                showTypeMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        function showFilamentMessage(text, type) {
+            const msg = document.getElementById('filamentMessage');
+            msg.textContent = text;
+            msg.className = 'message ' + type;
+        }
+
+        async function saveCustomFilament() {
+            const brand = document.getElementById('brand').value;
+            const type = document.getElementById('type').value;
+
+            const data = {
+                brand: brand,
+                type: type,
+                nozzle_min: parseInt(document.getElementById('customNozzleMin').value) || 200,
+                nozzle_max: parseInt(document.getElementById('customNozzleMax').value) || 220,
+                bed_min: parseInt(document.getElementById('customBedMin').value) || 50,
+                bed_max: parseInt(document.getElementById('customBedMax').value) || 60
+            };
+
+            try {
+                const response = await fetch('/api/filaments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showFilamentMessage('Custom preset saved!', 'success');
+                    await loadFilamentDatabase();
+                    applyFilamentPreset();
+                    setTimeout(closeFilamentModal, 1000);
+                } else {
+                    showFilamentMessage(result.error || 'Failed to save', 'error');
+                }
+            } catch (e) {
+                showFilamentMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteCurrentCustom() {
+            const brand = document.getElementById('brand').value;
+            const type = document.getElementById('type').value;
+            const key = brand + '|' + type;
+
+            if (!filamentDB.presets || !filamentDB.presets[key]) {
+                showFilamentMessage('No custom preset for this combination', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/filaments/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brand, type })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showFilamentMessage('Custom preset deleted', 'success');
+                    await loadFilamentDatabase();
+                    applyFilamentPreset();
+                } else {
+                    showFilamentMessage(result.error || 'Failed to delete', 'error');
+                }
+            } catch (e) {
+                showFilamentMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        async function resetAllFilaments() {
+            if (!confirm('Delete ALL custom filament data (brands, types, presets)? This cannot be undone.')) return;
+
+            try {
+                const response = await fetch('/api/filaments/reset', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    showFilamentMessage('All custom data deleted', 'success');
+                    await loadFilamentDatabase();
+                    applyFilamentPreset();
+                } else {
+                    showFilamentMessage(result.error || 'Failed to reset', 'error');
+                }
+            } catch (e) {
+                showFilamentMessage('Error: ' + e.message, 'error');
+            }
+        }
+
+        function exportFilaments() {
+            const dataStr = JSON.stringify(filamentDB, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'openspool-filaments.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            const presetCount = Object.keys(filamentDB.presets || {}).length;
+            const brandCount = (filamentDB.brands || []).length;
+            const typeCount = (filamentDB.types || []).length;
+            showFilamentMessage(`Exported ${presetCount} presets, ${brandCount} brands, ${typeCount} types`, 'success');
+        }
+
+        async function importFilaments(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const text = await file.text();
+                JSON.parse(text);  // Validate JSON
+
+                const response = await fetch('/api/filaments/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: text
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showFilamentMessage('Import successful!', 'success');
+                    await loadFilamentDatabase();
+                    applyFilamentPreset();
+                } else {
+                    showFilamentMessage(result.error || 'Import failed', 'error');
+                }
+            } catch (e) {
+                showFilamentMessage('Invalid JSON file', 'error');
+            }
+
+            event.target.value = '';  // Reset file input
+        }
+
+        // Close modals on overlay click (deferred until DOM ready)
+        document.addEventListener('DOMContentLoaded', () => {
+            const filamentModal = document.getElementById('filamentModal');
+            if (filamentModal) {
+                filamentModal.addEventListener('click', (e) => {
+                    if (e.target.id === 'filamentModal') closeFilamentModal();
+                });
+            }
+            const brandModal = document.getElementById('brandModal');
+            if (brandModal) {
+                brandModal.addEventListener('click', (e) => {
+                    if (e.target.id === 'brandModal') closeBrandModal();
+                });
+            }
+            const typeModal = document.getElementById('typeModal');
+            if (typeModal) {
+                typeModal.addEventListener('click', (e) => {
+                    if (e.target.id === 'typeModal') closeTypeModal();
+                });
+            }
+        });
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        // ============== End Filament Modal Functions ==============
+
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
         const message = document.getElementById('message');
@@ -749,6 +1412,10 @@
         const wifiIndicator = document.getElementById('wifiIndicator');
         const wifiCard = document.getElementById('wifiCard');
         const wifiMessage = document.getElementById('wifiMessage');
+
+        // Add event listeners for auto-fill
+        document.getElementById('brand').addEventListener('change', applyFilamentPreset);
+        document.getElementById('type').addEventListener('change', applyFilamentPreset);
 
         // Toggle WiFi card
         function toggleWifiCard() {
@@ -785,7 +1452,7 @@
                     document.getElementById('wifiInputSSID').value = data.configured_ssid;
                 }
             } catch (e) {
-                console.error('Failed to load WiFi status:', e);
+                // WiFi status load failed silently
             }
         }
 
@@ -803,19 +1470,27 @@
                     const data = await response.json();
 
                     if (data.networks && data.networks.length > 0) {
-                        networkList.innerHTML = data.networks.map(net => `
-                            <div class="network-item" onclick="selectNetwork('${net.ssid}')">
+                        networkList.innerHTML = data.networks.map(net => {
+                            // Escape HTML to prevent XSS
+                            const safeSSID = net.ssid
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;')
+                                .replace(/'/g, '&#039;');
+                            return `
+                            <div class="network-item" onclick="selectNetwork(this.dataset.ssid)" data-ssid="${safeSSID}">
                                 <div>
-                                    <span class="network-ssid">${net.ssid}</span>
+                                    <span class="network-ssid">${safeSSID}</span>
                                     ${net.secure ? '<span class="network-lock">&#128274;</span>' : ''}
                                 </div>
                                 <span class="network-signal">${net.rssi} dBm</span>
                             </div>
-                        `).join('');
+                        `}).join('');
                         return;
                     }
                 } catch (e) {
-                    console.log('Scan attempt failed, retrying...');
+                    // Scan attempt failed, retrying silently
                 }
 
                 attempts++;
@@ -831,7 +1506,7 @@
             document.getElementById('wifiInputSSID').value = ssid;
             document.querySelectorAll('.network-item').forEach(item => {
                 item.classList.remove('selected');
-                if (item.querySelector('.network-ssid').textContent === ssid) {
+                if (item.dataset.ssid === ssid) {
                     item.classList.add('selected');
                 }
             });
@@ -860,6 +1535,7 @@
 
                 if (data.success) {
                     showWifiMessage('Connected! Page will reload...', 'success');
+                    document.getElementById('wifiInputPassword').value = '';
                     setTimeout(() => {
                         loadWifiStatus();
                     }, 3000);
@@ -944,7 +1620,6 @@
                     throw new Error('HTTP ' + response.status);
                 }
                 const data = await response.json();
-                console.log('Status:', data);
 
                 if (data.nfcReady) {
                     statusDot.classList.add('ready');
@@ -964,7 +1639,6 @@
                     wifiIndicator.classList.remove('connected');
                 }
             } catch (e) {
-                console.error('Status check failed:', e);
                 statusDot.classList.remove('ready', 'scanning');
                 statusText.textContent = 'Connection Error';
             }
@@ -980,16 +1654,46 @@
         }
 
         function buildJSON() {
+            // Validate color hex
+            const colorHex = document.getElementById('colorHex').value.toUpperCase();
+            if (!/^#[0-9A-F]{6}$/.test(colorHex)) {
+                showMessage('Invalid color format. Use #RRGGBB', 'error');
+                return null;
+            }
+
+            // Validate temperatures
+            const minTemp = parseInt(document.getElementById('minTemp').value) || 0;
+            const maxTemp = parseInt(document.getElementById('maxTemp').value) || 0;
+            const bedMinTemp = parseInt(document.getElementById('bedMinTemp').value) || 0;
+            const bedMaxTemp = parseInt(document.getElementById('bedMaxTemp').value) || 0;
+
+            if (minTemp < 0 || minTemp > 400 || maxTemp < 0 || maxTemp > 400) {
+                showMessage('Nozzle temperature must be between 0 and 400°C', 'error');
+                return null;
+            }
+            if (bedMinTemp < 0 || bedMinTemp > 150 || bedMaxTemp < 0 || bedMaxTemp > 150) {
+                showMessage('Bed temperature must be between 0 and 150°C', 'error');
+                return null;
+            }
+            if (minTemp > maxTemp) {
+                showMessage('Nozzle min temperature cannot be greater than max', 'error');
+                return null;
+            }
+            if (bedMinTemp > bedMaxTemp) {
+                showMessage('Bed min temperature cannot be greater than max', 'error');
+                return null;
+            }
+
             const data = {
                 protocol: "openspool",
                 version: "1.0",
                 brand: document.getElementById('brand').value,
                 type: document.getElementById('type').value,
-                color_hex: document.getElementById('colorHex').value.toUpperCase(),
-                min_temp: parseInt(document.getElementById('minTemp').value),
-                max_temp: parseInt(document.getElementById('maxTemp').value),
-                bed_min_temp: parseInt(document.getElementById('bedMinTemp').value),
-                bed_max_temp: parseInt(document.getElementById('bedMaxTemp').value)
+                color_hex: colorHex,
+                min_temp: minTemp,
+                max_temp: maxTemp,
+                bed_min_temp: bedMinTemp,
+                bed_max_temp: bedMaxTemp
             };
 
             const subtype = document.getElementById('subtype').value.trim();
@@ -1051,38 +1755,70 @@
         async function readTag() {
             const btn = document.getElementById('btnRead');
             btn.disabled = true;
-            btn.textContent = 'Reading...';
+            btn.textContent = 'Waiting for tag...';
             statusDot.classList.add('scanning');
             statusDot.classList.remove('ready');
             hideMessage();
+            
+            // Disable auto-write while reading
+            const wasAutoWriteEnabled = document.getElementById('autoWriteToggle').checked;
+            if (wasAutoWriteEnabled) {
+                document.getElementById('autoWriteToggle').checked = false;
+                await fetch('/api/autowrite', { method: 'DELETE' });
+                updateAutoWriteUI(false);
+            }
+            
+            showMessage('Place a tag on the reader...', 'success');
 
-            try {
-                const response = await fetch('/api/read');
-                const result = await response.json();
-
-                if (result.error) {
-                    showMessage(result.error, 'error');
-                    jsonPreview.style.display = 'none';
-                    updateTagInfo(null);
-                } else {
-                    // Update tag info display
-                    if (result.tag) {
-                        updateTagInfo(result.tag);
+            // Poll for tag with timeout
+            const maxAttempts = 60; // 30 seconds timeout (500ms intervals)
+            let attempts = 0;
+            let result = null;
+            
+            while (attempts < maxAttempts) {
+                try {
+                    const response = await fetch('/api/read');
+                    result = await response.json();
+                    
+                    // If we got a tag (no "No tag" error), break out
+                    if (!result.error || !result.error.includes('No tag')) {
+                        break;
                     }
-
-                    // Populate form with data
-                    if (result.data && typeof result.data === 'object') {
-                        populateForm(result.data);
-                        showMessage('Tag read successfully!', 'success');
-                        jsonPreview.textContent = JSON.stringify(result.data, null, 2);
-                        jsonPreview.style.display = 'block';
-                    } else if (result.message) {
-                        showMessage(result.message, 'success');
-                        jsonPreview.style.display = 'none';
-                    }
+                } catch (e) {
+                    // Network error, keep trying
                 }
-            } catch (e) {
-                showMessage('Failed to read tag: ' + e.message, 'error');
+                
+                attempts++;
+                btn.textContent = `Waiting... ${Math.ceil((maxAttempts - attempts) / 2)}s`;
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            if (result && !result.error) {
+                // Update tag info display
+                if (result.tag) {
+                    updateTagInfo(result.tag);
+                }
+
+                // Populate form with data
+                if (result.data && typeof result.data === 'object') {
+                    populateForm(result.data);
+                    showMessage('Tag read successfully!', 'success');
+                    jsonPreview.textContent = JSON.stringify(result.data, null, 2);
+                    jsonPreview.style.display = 'block';
+                } else if (result.message) {
+                    showMessage(result.message, 'success');
+                    jsonPreview.style.display = 'none';
+                }
+            } else if (result && result.error) {
+                if (result.error.includes('No tag')) {
+                    showMessage('Timeout: No tag detected', 'error');
+                } else {
+                    showMessage(result.error, 'error');
+                }
+                jsonPreview.style.display = 'none';
+                updateTagInfo(null);
+            } else {
+                showMessage('Failed to read tag', 'error');
                 updateTagInfo(null);
             }
 
@@ -1100,6 +1836,13 @@
             hideMessage();
 
             const data = buildJSON();
+            if (data === null) {
+                btn.disabled = false;
+                btn.textContent = 'Write Tag';
+                statusDot.classList.remove('scanning');
+                checkStatus();
+                return;
+            }
             jsonPreview.textContent = JSON.stringify(data, null, 2);
             jsonPreview.style.display = 'block';
 
@@ -1114,6 +1857,7 @@
 
                 if (result.success) {
                     showMessage('Tag written successfully!', 'success');
+                    jsonPreview.style.display = 'none';
                 } else {
                     showMessage(result.error || 'Write failed', 'error');
                 }
@@ -1166,6 +1910,99 @@
             checkStatus();
         }
 
+        // Auto-Write Functions
+        function clickAutoWriteToggle() {
+            const toggle = document.getElementById('autoWriteToggle');
+            toggle.checked = !toggle.checked;
+            toggleAutoWrite();
+        }
+        
+        function updateAutoWriteUI(enabled) {
+            const switchEl = document.getElementById('autoWriteSwitch');
+            const statusBadge = document.getElementById('autoWriteStatus');
+            
+            if (enabled) {
+                switchEl.classList.add('active');
+                statusBadge.textContent = 'ON';
+                statusBadge.classList.add('active');
+            } else {
+                switchEl.classList.remove('active');
+                statusBadge.textContent = 'OFF';
+                statusBadge.classList.remove('active');
+            }
+        }
+        
+        async function toggleAutoWrite() {
+            const toggle = document.getElementById('autoWriteToggle');
+            const enabled = toggle.checked;
+            
+            if (enabled) {
+                // Build JSON from current form data
+                const data = buildJSON();
+                if (data === null) {
+                    toggle.checked = false;
+                    updateAutoWriteUI(false);
+                    showMessage('Please fill in the required fields first', 'error');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/api/autowrite', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: true, data: data })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success && result.enabled) {
+                        updateAutoWriteUI(true);
+                        showMessage('Auto-write enabled. Place tags on reader to write automatically.', 'success');
+                    } else {
+                        toggle.checked = false;
+                        updateAutoWriteUI(false);
+                        showMessage(result.error || 'Failed to enable auto-write', 'error');
+                    }
+                } catch (e) {
+                    toggle.checked = false;
+                    updateAutoWriteUI(false);
+                    showMessage('Failed to enable auto-write: ' + e.message, 'error');
+                }
+            } else {
+                try {
+                    const response = await fetch('/api/autowrite', { method: 'DELETE' });
+                    const result = await response.json();
+                    
+                    updateAutoWriteUI(false);
+                    showMessage('Auto-write disabled', 'success');
+                } catch (e) {
+                    showMessage('Failed to disable auto-write: ' + e.message, 'error');
+                }
+            }
+        }
+        
+        async function checkAutoWriteStatus() {
+            try {
+                const response = await fetch('/api/autowrite');
+                const result = await response.json();
+                
+                const toggle = document.getElementById('autoWriteToggle');
+                toggle.checked = result.enabled;
+                updateAutoWriteUI(result.enabled);
+                
+                // Check for auto-write result notification
+                if (result.writeResult && result.writeResult.pending) {
+                    if (result.writeResult.success) {
+                        showMessage(`Tag written successfully! (UID: ${result.writeResult.tagUID})`, 'success');
+                    } else {
+                        showMessage(`Auto-write failed: ${result.writeResult.error}`, 'error');
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to check auto-write status:', e);
+            }
+        }
+
         async function uploadFirmware() {
             const fileInput = document.getElementById('firmwareFile');
             const file = fileInput.files[0];
@@ -1208,15 +2045,20 @@
 
                 xhr.onload = () => {
                     if (xhr.status === 200) {
-                        const result = JSON.parse(xhr.responseText);
-                        if (result.success) {
-                            otaMessage.textContent = 'Update successful! Restarting device...';
-                            otaMessage.className = 'message success';
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 5000);
-                        } else {
-                            otaMessage.textContent = result.error || 'Update failed';
+                        try {
+                            const result = JSON.parse(xhr.responseText);
+                            if (result.success) {
+                                otaMessage.textContent = 'Update successful! Restarting device...';
+                                otaMessage.className = 'message success';
+                                setTimeout(() => {
+                                    window.location.reload();
+                                }, 5000);
+                            } else {
+                                otaMessage.textContent = result.error || 'Update failed';
+                                otaMessage.className = 'message error';
+                            }
+                        } catch (e) {
+                            otaMessage.textContent = 'Invalid server response';
                             otaMessage.className = 'message error';
                         }
                     } else {
@@ -1275,9 +2117,26 @@
 
         // Initial status check
         checkStatus();
+        checkAutoWriteStatus();
+
+        // Load filament database on startup
+        loadFilamentDatabase();
 
         // Periodic status check
         setInterval(checkStatus, 5000);
+        
+        // Fast polling for auto-write status (to catch write notifications quickly)
+        setInterval(checkAutoWriteStatus, 1000);
+
+        // Register Service Worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').then((reg) => {
+                // Check for updates periodically
+                setInterval(() => reg.update(), 60000);
+            }).catch(() => {
+                // Service worker registration failed silently
+            });
+        }
     </script>
 
     <!-- Confirm Modal -->
@@ -1289,6 +2148,103 @@
             <div class="modal-buttons">
                 <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
                 <button class="modal-btn modal-btn-confirm" id="modalConfirmBtn" onclick="confirmAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filament Temperature Preset Modal -->
+    <div class="modal-overlay" id="filamentModal">
+        <div class="modal" style="max-width: 400px;">
+            <h3 class="modal-title">Temperature Preset</h3>
+            <p id="filamentModalSubtitle" style="color: #888; font-size: 0.9rem; margin-bottom: 20px;">Generic PLA</p>
+            
+            <div style="text-align: left;">
+                <div class="temp-row" style="margin-bottom: 15px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Nozzle Min (C)</label>
+                        <input type="number" id="customNozzleMin" value="190" min="0" max="400">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Nozzle Max (C)</label>
+                        <input type="number" id="customNozzleMax" value="220" min="0" max="400">
+                    </div>
+                </div>
+                <div class="temp-row">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Bed Min (C)</label>
+                        <input type="number" id="customBedMin" value="50" min="0" max="150">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Bed Max (C)</label>
+                        <input type="number" id="customBedMax" value="60" min="0" max="150">
+                    </div>
+                </div>
+            </div>
+
+            <div class="message" id="filamentMessage" style="margin: 15px 0;"></div>
+
+            <div class="modal-buttons" style="margin-bottom: 15px;">
+                <button class="modal-btn modal-btn-cancel" onclick="closeFilamentModal()">Cancel</button>
+                <button class="modal-btn" style="background: #ff6b35; color: #fff;" onclick="saveCustomFilament()">Save Preset</button>
+            </div>
+            
+            <!-- Manage Section -->
+            <div style="border-top: 1px solid #3d3d3d; padding-top: 15px; margin-top: 10px;">
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
+                    <button class="btn btn-secondary" style="padding: 8px 12px; font-size: 0.8rem;" onclick="deleteCurrentCustom()">Delete Preset</button>
+                    <button class="btn btn-secondary" style="padding: 8px 12px; font-size: 0.8rem;" onclick="exportFilaments()">Export</button>
+                    <button class="btn btn-secondary" style="padding: 8px 12px; font-size: 0.8rem;" onclick="document.getElementById('importFile').click()">Import</button>
+                    <button class="btn btn-danger" style="padding: 8px 12px; font-size: 0.8rem;" onclick="resetAllFilaments()">Reset All</button>
+                </div>
+                <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importFilaments(event)">
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Brand Modal -->
+    <div class="modal-overlay" id="brandModal">
+        <div class="modal" style="max-width: 400px;">
+            <h3 class="modal-title">Custom Brands</h3>
+            <p style="color: #888; font-size: 0.85rem; margin-bottom: 15px;">Add your own filament brands</p>
+            
+            <div style="text-align: left;">
+                <div id="brandList" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 15px; min-height: 30px;">
+                    <span style="color:#666;font-size:0.85rem;">No custom brands added yet</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="newBrandInput" placeholder="Enter brand name" style="flex: 1; padding: 10px; font-size: 0.9rem;">
+                    <button class="btn btn-primary" style="padding: 10px 16px;" onclick="addBrandFromModal()">Add</button>
+                </div>
+            </div>
+
+            <div class="message" id="brandMessage" style="margin: 15px 0;"></div>
+
+            <div class="modal-buttons">
+                <button class="modal-btn" style="background: #3d3d3d; color: #fff; width: 100%;" onclick="closeBrandModal()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Material Type Modal -->
+    <div class="modal-overlay" id="typeModal">
+        <div class="modal" style="max-width: 400px;">
+            <h3 class="modal-title">Custom Material Types</h3>
+            <p style="color: #888; font-size: 0.85rem; margin-bottom: 15px;">Add your own material types</p>
+            
+            <div style="text-align: left;">
+                <div id="typeList" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 15px; min-height: 30px;">
+                    <span style="color:#666;font-size:0.85rem;">No custom types added yet</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="newTypeInput" placeholder="Enter type (e.g. PLA+)" style="flex: 1; padding: 10px; font-size: 0.9rem;">
+                    <button class="btn btn-primary" style="padding: 10px 16px;" onclick="addTypeFromModal()">Add</button>
+                </div>
+            </div>
+
+            <div class="message" id="typeMessage" style="margin: 15px 0;"></div>
+
+            <div class="modal-buttons">
+                <button class="modal-btn" style="background: #3d3d3d; color: #fff; width: 100%;" onclick="closeTypeModal()">Done</button>
             </div>
         </div>
     </div>
